@@ -86,6 +86,10 @@ def test_full_workflow(app, window, tmp_path):
     recipe.scale.a.setValue(0.9)
     assert window.state.project.settings.transform.scale[0] == pytest.approx(0.9)
     recipe.preview()
+    recipe.labeltool.setChecked(True)
+    recipe.class_name.setText("scratch")
+    assert window.state.project.settings.save_labeltool_db
+    assert window.state.project.settings.labeltool_class_name == "scratch"
 
     window.go(3)
     gen = window.pages[3]
@@ -100,7 +104,12 @@ def test_full_workflow(app, window, tmp_path):
     save.zip.setChecked(True)
     save.save()
     dest = tmp_path / "export" / "UI test"
-    assert len(list((dest / "images").glob("*.png"))) == 4
+    assert len(list((dest / "Images").glob("*.png"))) == 4
+    import sqlite3
+    db = sqlite3.connect(dest / "UI test.sqlite")
+    assert db.execute("select count(*) from Samples").fetchone() == (4,)
+    assert db.execute("select AnnotationLabelName from AnnotationLabelDefinitions where AnnotationLabelId=2").fetchone() == ("scratch",)
+    db.close()
     assert (dest / "manifest.json").exists()
     assert not (dest / ".preview_masks").exists()
     assert (tmp_path / "export" / "UI test.zip").exists()
