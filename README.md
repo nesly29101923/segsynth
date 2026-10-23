@@ -15,6 +15,7 @@ When only a handful of defect images exist, a segmentation model sees each defec
 - **Placement control.** Anywhere, same column, same row, or near the original spot, with minimum gaps and avoidance of already-marked defects.
 - **Multiple blending methods.** Texture-preserving add, Poisson (normal / mixed) and soft paste; mix several to diversify the dataset.
 - **Reproducible.** Every run writes a `manifest.json` with the background, source defect, position and the exact parameters of every paste. Same seed + settings = identical dataset.
+- **Label tool export.** Optionally writes a label tool database (`.sqlite`) with every synthetic image as a TRAIN sample and its pasted defects as the segmentation label.
 - **Works offline.** NumPy + OpenCV + Qt. 8/16-bit, grayscale or color, PNG/TIFF/BMP/JPEG.
 
 ## Workflow
@@ -82,6 +83,17 @@ my_dataset/
 └── manifest.json
 ```
 
+With **Also create label tool database** enabled, the layout matches what the label tool expects:
+
+```
+my_dataset/
+├── Images/              synth_00001.png …
+├── my_dataset.sqlite    one TRAIN sample per image, pasted defects labeled with your class name
+└── manifest.json
+```
+
+Open the `.sqlite` in the label tool and the images appear already annotated. The masks are stored in the tool's own run-length format (with CRC32), the schema matches settings version 14, and classification/anomaly annotations get the tool's defaults.
+
 Masks cover only the *pasted* defects. Defects that were already present in a defective background image are not in the mask, so label the final dataset yourself or merge with your existing annotations.
 
 ## Settings reference
@@ -99,6 +111,7 @@ Masks cover only the *pasted* defects. Defects that were already present in a de
 | Texture window | Length of the background window; should be larger than the defect. |
 | Edge softness | Feathering of the paste boundary. |
 | Defects per image | 1 = only the recipe defect; higher adds random extra defects. |
+| Label tool database | Writes `<dataset>.sqlite` plus an `Images` folder; set the defect class name and colour. |
 
 ## Development
 

@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout,
-    QGroupBox, QHBoxLayout, QHeaderView, QLabel, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
+    QAbstractItemView, QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout,
+    QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -250,11 +251,33 @@ class RecipePage(QWidget):
         self.masks = QCheckBox("Also save masks")
         self.masks.setToolTip("Binary masks of the pasted defects (255 = defect). Off when you label by hand.")
         self.overlays = QCheckBox("Also save review overlays")
+        self.labeltool = QCheckBox("Also create label tool database (.sqlite)")
+        self.labeltool.setToolTip(
+            "Writes <dataset>.sqlite next to an Images folder. Each synthetic image is added as a\n"
+            "TRAIN sample with the pasted defects as its segmentation label, ready to open and\n"
+            "correct in the label tool. Defects already present in a background are not labeled.")
+        self.class_name = QLineEdit()
+        self.class_name.setPlaceholderText("defect")
+        self.class_name.setToolTip("Name of the defect class in the label tool.")
+        self.class_color = QPushButton()
+        self.class_color.setFixedWidth(44)
+        self.class_color.setToolTip("Colour of the defect class in the label tool.")
+        class_row = QHBoxLayout()
+        class_row.setSpacing(6)
+        class_row.addWidget(self.class_name, 1)
+        class_row.addWidget(self.class_color)
+        self.class_row_widget = QWidget()
+        self.class_row_widget.setStyleSheet("background: transparent;")
+        self.class_row_widget.setLayout(class_row)
+        class_row.setContentsMargins(0, 0, 0, 0)
         f.addRow(self._tip("Random seed", "Same seed and settings give exactly the same dataset."), self.seed)
         f.addRow("File prefix", self.prefix)
         f.addRow("Format", self.ext)
         f.addRow("", self.masks)
         f.addRow("", self.overlays)
+        f.addRow("", self.labeltool)
+        self.class_label = self._tip("Defect class", "Class name and colour written to the label tool database.")
+        f.addRow(self.class_label, self.class_row_widget)
         pl.addWidget(g)
         reset = QPushButton("Reset settings to defaults")
         reset.setObjectName("Ghost")
@@ -272,7 +295,10 @@ class RecipePage(QWidget):
             w.connect(self._settings_from_ui)
         for w in (self.elastic, self.jitter, self.gap, self.bg_size, self.feather, self.seed):
             w.valueChanged.connect(self._settings_from_ui)
-        for w in (self.flip_h, self.flip_v, self.avoid, self.masks, self.overlays, *self.blend_checks.values()):
+        self.class_name.textChanged.connect(self._settings_from_ui)
+        self.class_color.clicked.connect(self._pick_class_color)
+        for w in (self.flip_h, self.flip_v, self.avoid, self.masks, self.overlays, self.labeltool,
+                  *self.blend_checks.values()):
             w.toggled.connect(self._settings_from_ui)
         for w in (self.placement, self.bg_mode, self.ext):
             w.currentIndexChanged.connect(self._settings_from_ui)
@@ -323,6 +349,10 @@ class RecipePage(QWidget):
         self.ext.setCurrentIndex(max(0, self.ext.findData(s.output_ext)))
         self.masks.setChecked(s.save_masks)
         self.overlays.setChecked(s.save_overlays)
+        self.labeltool.setChecked(s.save_labeltool_db)
+        self.class_name.setText(s.labeltool_class_name)
+        self._show_class_color(s.labeltool_class_color)
+        self._update_class_row()
         self._loading = False
 
     def _settings_from_ui(self, *_) -> None:
@@ -353,7 +383,28 @@ class RecipePage(QWidget):
         s.name_prefix = "".join(c for c in self.prefix.currentText().strip() if c.isalnum() or c in "-_") or "synth"
         s.output_ext = self.ext.currentData()
         s.save_masks, s.save_overlays = self.masks.isChecked(), self.overlays.isChecked()
+        s.save_labeltool_db = self.labeltool.isChecked()
+        s.labeltool_class_name = self.class_name.text().strip() or "defect"
+        self._update_class_row()
         self.state.settingsChanged.emit()
+
+    def _update_class_row(self) -> None:
+        on = self.labeltool.isChecked()
+        self.class_label.setEnabled(on)
+        self.class_row_widget.setEnabled(on)
+
+    def _show_class_color(self, color: str) -> None:
+        self.class_color.setStyleSheet(
+            f"QPushButton {{ background: {color}; border: 1px solid #3d4554; border-radius: 6px; }}"
+            f"QPushButton:disabled {{ background: #2c323d; }}")
+
+    def _pick_class_color(self) -> None:
+        s = self.state.project.settings
+        c = QColorDialog.getColor(QColor(s.labeltool_class_color), self, "Defect class colour")
+        if c.isValid():
+            s.labeltool_class_color = c.name()
+            self._show_class_color(s.labeltool_class_color)
+            self.state.settingsChanged.emit()
 
     def _reset_defaults(self) -> None:
         from ...core.project import GenerationSettings

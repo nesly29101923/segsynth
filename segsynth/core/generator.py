@@ -15,6 +15,7 @@ from . import transform as tf
 from .background import BackgroundMode
 from .blend import BlendMode, blend
 from .imageio import max_value, write_image
+from .labeltool import LabelToolWriter
 from .patch import DefectPatch, extract_patch
 from .placement import find_position
 from .project import DefectEntry, Project
@@ -175,7 +176,8 @@ def run_to_folder(
 ) -> dict:
     s = project.settings
     out = Path(out_dir)
-    (out / "images").mkdir(parents=True, exist_ok=True)
+    image_dir = "Images" if s.save_labeltool_db else "images"
+    (out / image_dir).mkdir(parents=True, exist_ok=True)
     if s.save_masks:
         (out / "masks").mkdir(parents=True, exist_ok=True)
     if s.save_overlays:
@@ -185,22 +187,14 @@ def run_to_folder(
     records = []
     started = time.time()
     gen = Generator(project)
-    for sample in gen.generate(stop):
-        stem = f"{s.name_prefix}_{sample.index + 1:05d}"
-        img_path = out / "images" / f"{stem}{s.output_ext}"
-        write_image(img_path, sample.image)
-        sample.files["image"] = str(img_path.relative_to(out))
-        if s.save_masks:
-            mpath = out / "masks" / f"{stem}.png"
-            write_image(mpath, sample.mask * 255)
-            sample.files["mask"] = str(mpath.relative_to(out))
-        if s.save_overlays:
-            opath = out / "overlays" / f"{stem}.jpg"
-            write_image(opath, overlay(sample.image, sample.mask))
-            sample.files["overlay"] = str(opath.relative_to(out))
-        records.append({"file": sample.files["image"], **sample.meta})
-        if progress:
-            progress(len(records), total, sample)
+    db = None
+    if s.save_labeltool_db:
+        db = LabelToolWriter(out / labeltool_db_name(project), s.labeltool_class_name, s.labeltool_class_color)
+    try:
+        _write_samples(gen, s, out, image_dir, db, records, total, progress, stop)
+    finally:
+        if db is not None:
+            db.close()
 
     manifest = {
         "generator": "segsynth",
@@ -210,10 +204,37 @@ def run_to_folder(
         "count": len(records),
         "completed": len(records) == total,
         "settings": s.to_dict(),
+        "labeltool_db": labeltool_db_name(project) if s.save_labeltool_db else None,
         "samples": records,
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest
+
+
+def labeltool_db_name(project: Project) -> str:
+    stem = "".join(c if c.isalnum() or c in " -_" else "_" for c in project.name).strip() or "dataset"
+    return f"{stem}.sqlite"
+
+
+def _write_samples(gen, s, out: Path, image_dir: str, db, records: list, total: int, progress, stop) -> None:
+    for sample in gen.generate(stop):
+        stem = f"{s.name_prefix}_{sample.index + 1:05d}"
+        img_path = out / image_dir / f"{stem}{s.output_ext}"
+        write_image(img_path, sample.image)
+        sample.files["image"] = img_path.relative_to(out).as_posix()
+        if s.save_masks:
+            mpath = out / "masks" / f"{stem}.png"
+            write_image(mpath, sample.mask * 255)
+            sample.files["mask"] = mpath.relative_to(out).as_posix()
+        if s.save_overlays:
+            opath = out / "overlays" / f"{stem}.jpg"
+            write_image(opath, overlay(sample.image, sample.mask))
+            sample.files["overlay"] = opath.relative_to(out).as_posix()
+        if db is not None:
+            db.add(sample.files["image"], sample.mask)
+        records.append({"file": sample.files["image"], **sample.meta})
+        if progress:
+            progress(len(records), total, sample)
 
 
 def overlay(image: np.ndarray, mask: np.ndarray, color=(0, 0, 255), alpha: float = 0.45) -> np.ndarray:
