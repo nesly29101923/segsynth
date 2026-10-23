@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "segsynth"
+dynamic = ["version"]
+description = "Synthetic data generator for semantic segmentation: copy, vary and paste real defects onto new backgrounds."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Neslihan Turgut" }]
+keywords = ["synthetic data", "semantic segmentation", "data augmentation", "defect detection", "copy-paste", "computer vision"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Intended Audience :: Science/Research",
+]
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python-headless>=4.8",
+    "PySide6-Essentials>=6.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pyflakes>=3"]
+build = ["pyinstaller>=6"]
+
+[project.scripts]
+segsynth = "segsynth.__main__:main"
+
+[project.gui-scripts]
+segsynth-gui = "segsynth.app:run"
+
+[tool.setuptools.dynamic]
+version = { attr = "segsynth.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["segsynth*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
