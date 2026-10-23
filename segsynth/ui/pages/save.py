@@ -104,7 +104,10 @@ class SavePage(QWidget):
             s = m["settings"]
             extras = [x for x, on in (("masks", s["save_masks"]), ("review overlays", s["save_overlays"])) if on]
             if m.get("labeltool_db"):
-                extras.append(f"label tool database {m['labeltool_db']}")
+                src = m.get("source_images") or []
+                good = sum(1 for x in src if x["label"] == "good")
+                extras.append(f"label tool database {m['labeltool_db']}"
+                              + (f" (with {len(src)} source images: {good} good, {len(src) - good} bad)" if src else ""))
             self.summary.setText(
                 f"<b>{m['count']:,} synthetic images</b> ready"
                 + (f" · plus {' and '.join(extras)}" if extras else "")

@@ -75,10 +75,11 @@ def test_generator_writes_database(small_project, tmp_path):
     out = tmp_path / "out"
     manifest = run_to_folder(small_project, out)
     assert manifest["labeltool_db"] == "Synthetic set.sqlite"
-    assert len(list((out / "Images").glob("*.png"))) == 5
+    assert len(list((out / "Images").glob("synth_*.png"))) == 5
     c = sqlite3.connect(out / "Synthetic set.sqlite")
     rows = c.execute("""select s.SampleFilePath, a.SemanticSegmentationRunLengthCode from Samples s
-                        join SemanticSegmentationAnnotations a on a.LinkSampleId = s.SampleId""").fetchall()
+                        join SemanticSegmentationAnnotations a on a.LinkSampleId = s.SampleId
+                        where s.SampleFilePath like 'Images\\synth_%'""").fetchall()
     assert len(rows) == 5
     for path, blob in rows:
         rel = path.replace("\\", "/")
@@ -99,3 +100,44 @@ def test_default_keeps_previous_layout(small_project, tmp_path):
 def test_settings_roundtrip():
     s = GenerationSettings(save_labeltool_db=True, labeltool_class_name="dent", labeltool_class_color="#123456")
     assert GenerationSettings.from_dict(s.to_dict()) == s
+
+
+def test_sources_good_and_bad(small_project, tmp_path):
+    small_project.settings.save_labeltool_db = True
+    out = tmp_path / "out"
+    manifest = run_to_folder(small_project, out)
+    labels = {x["source"]: x["label"] for x in manifest["source_images"]}
+    assert labels == {"clean.png": "good", "defect.png": "bad"}
+    c = sqlite3.connect(out / f"{small_project.name}.sqlite")
+    rows = c.execute("""select s.SampleFilePath, a.SemanticSegmentationRunLengthCode, d.LinkAnnotationLabelId
+                        from Samples s
+                        join SemanticSegmentationAnnotations a on a.LinkSampleId = s.SampleId
+                        join AnomalyDetectionAnnotations d on d.LinkSampleId = s.SampleId""").fetchall()
+    assert len(rows) == 5 + 2
+    by_path = {p: (decode_rle(b), lab) for p, b, lab in rows}
+    clean, clean_lab = by_path["Images\\real_clean.png"]
+    assert not clean.any() and clean_lab == -1
+    bad, bad_lab = by_path["Images\\real_defect.png"]
+    assert bad.any() and bad_lab == -2
+    defect = small_project.defects[0]
+    assert np.array_equal(bad > 0, defect.mask > 0)
+    synth = [v for p, v in by_path.items() if "synth_" in p]
+    assert all(m.any() and lab == -2 for m, lab in synth)
+    assert read_image(out / "Images" / "real_clean.png").shape == read_image(small_project.images[0].path).shape
+
+
+def test_sources_can_be_excluded(small_project, tmp_path):
+    small_project.settings.save_labeltool_db = True
+    small_project.settings.labeltool_include_sources = False
+    out = tmp_path / "out"
+    run_to_folder(small_project, out)
+    c = sqlite3.connect(out / f"{small_project.name}.sqlite")
+    assert c.execute("select count(*) from Samples").fetchone() == (5,)
+    assert not list((out / "Images").glob("real_*"))
+
+
+def test_backgrounds_used_evenly(small_project, tmp_path):
+    from segsynth.core.generator import Generator
+    small_project.defects[0].count = 10
+    seen = [s.meta["target_image"] for s in Generator(small_project).generate()]
+    assert seen.count("clean.png") == seen.count("defect.png") == 5
