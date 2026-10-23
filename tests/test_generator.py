@@ -64,7 +64,8 @@ def test_avoids_marked_defects(small_project):
     small_project.images[0].use_as_target = False
     marked = small_project.marked_mask(src.id, small_project.load_pixels(src.id).shape[:2])
     for s in Generator(small_project).generate():
-        assert not (s.mask & marked).any()
+        assert not (s.pasted & marked).any()
+        assert np.array_equal(s.mask, s.pasted | marked)
 
 
 def test_stop_event(small_project):

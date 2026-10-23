@@ -256,6 +256,11 @@ class RecipePage(QWidget):
             "Writes <dataset>.sqlite next to an Images folder. Each synthetic image is added as a\n"
             "TRAIN sample with the pasted defects as its segmentation label, ready to open and\n"
             "correct in the label tool. Defects already present in a background are not labeled.")
+        self.include_sources = QCheckBox("Include source images (no picked defects = good)")
+        self.include_sources.setToolTip(
+            "Copies every source image into the dataset as a real sample.\n"
+            "Images with no picked defects are labeled good; images with picked defects are\n"
+            "labeled bad with those defects as their mask.")
         self.class_name = QLineEdit()
         self.class_name.setPlaceholderText("defect")
         self.class_name.setToolTip("Name of the defect class in the label tool.")
@@ -276,6 +281,7 @@ class RecipePage(QWidget):
         f.addRow("", self.masks)
         f.addRow("", self.overlays)
         f.addRow("", self.labeltool)
+        f.addRow("", self.include_sources)
         self.class_label = self._tip("Defect class", "Class name and colour written to the label tool database.")
         f.addRow(self.class_label, self.class_row_widget)
         pl.addWidget(g)
@@ -297,7 +303,7 @@ class RecipePage(QWidget):
             w.valueChanged.connect(self._settings_from_ui)
         self.class_name.textChanged.connect(self._settings_from_ui)
         self.class_color.clicked.connect(self._pick_class_color)
-        for w in (self.flip_h, self.flip_v, self.avoid, self.masks, self.overlays, self.labeltool,
+        for w in (self.flip_h, self.flip_v, self.avoid, self.masks, self.overlays, self.labeltool, self.include_sources,
                   *self.blend_checks.values()):
             w.toggled.connect(self._settings_from_ui)
         for w in (self.placement, self.bg_mode, self.ext):
@@ -350,6 +356,7 @@ class RecipePage(QWidget):
         self.masks.setChecked(s.save_masks)
         self.overlays.setChecked(s.save_overlays)
         self.labeltool.setChecked(s.save_labeltool_db)
+        self.include_sources.setChecked(s.labeltool_include_sources)
         self.class_name.setText(s.labeltool_class_name)
         self._show_class_color(s.labeltool_class_color)
         self._update_class_row()
@@ -384,12 +391,14 @@ class RecipePage(QWidget):
         s.output_ext = self.ext.currentData()
         s.save_masks, s.save_overlays = self.masks.isChecked(), self.overlays.isChecked()
         s.save_labeltool_db = self.labeltool.isChecked()
+        s.labeltool_include_sources = self.include_sources.isChecked()
         s.labeltool_class_name = self.class_name.text().strip() or "defect"
         self._update_class_row()
         self.state.settingsChanged.emit()
 
     def _update_class_row(self) -> None:
         on = self.labeltool.isChecked()
+        self.include_sources.setEnabled(on)
         self.class_label.setEnabled(on)
         self.class_row_widget.setEnabled(on)
 

@@ -92,6 +92,8 @@ my_dataset/
 └── manifest.json
 ```
 
+Source images are copied in as `real_*.png`: images with no picked defects are labeled **good**, images with picked defects **bad** with those defects as their mask. Synthetic images are labeled **bad**; their mask holds the pasted defects plus any defects picked on their background. Synthetic images are spread evenly over all background images.
+
 Open the `.sqlite` in the label tool and the images appear already annotated. The masks are stored in the tool's own run-length format (with CRC32), the schema matches settings version 14, and classification/anomaly annotations get the tool's defaults.
 
 Masks cover only the *pasted* defects. Defects that were already present in a defective background image are not in the mask, so label the final dataset yourself or merge with your existing annotations.

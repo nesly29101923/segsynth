@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 import time
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ class GeneratedSample:
     mask: np.ndarray
     meta: dict
     files: dict = field(default_factory=dict)
+    pasted: np.ndarray | None = None
 
 
 class GenerationError(RuntimeError):
@@ -131,13 +133,20 @@ class Generator:
         lo = max(1, lo)
         hi = max(lo, hi)
 
+        cycle: list = []
+
+        def next_target():
+            if not cycle:
+                cycle.extend(targets[i] for i in rng.permutation(len(targets)))
+            return cycle.pop()
+
         for index, defect_id in enumerate(self.plan(rng)):
             if stop is not None and stop.is_set():
                 return
             primary = self.project.defect(defect_id)
             sample = None
-            for _ in range(4):
-                tgt = targets[int(rng.integers(len(targets)))]
+            for _ in range(max(4, len(targets))):
+                tgt = next_target()
                 img = self.project.load_pixels(tgt.id)
                 shape = img.shape[:2]
                 occupied = self._marked_mask(tgt.id, shape).copy() if self.s.avoid_marked_defects \
@@ -153,10 +162,13 @@ class Generator:
                     canvas, info = self._paste(canvas, label, occupied, extra, shape, rng, max_value(img))
                     if info is not None:
                         placed.append(info)
+                pasted = label.copy()
+                label |= self.project.marked_mask(tgt.id, shape)
                 sample = GeneratedSample(
                     index=index,
                     image=canvas,
                     mask=label,
+                    pasted=pasted,
                     meta={"target_image": tgt.name, "defects": placed},
                 )
                 break
@@ -190,7 +202,10 @@ def run_to_folder(
     db = None
     if s.save_labeltool_db:
         db = LabelToolWriter(out / labeltool_db_name(project), s.labeltool_class_name, s.labeltool_class_color)
+    sources = []
     try:
+        if db is not None and s.labeltool_include_sources:
+            sources = _write_sources(project, out, image_dir, db)
         _write_samples(gen, s, out, image_dir, db, records, total, progress, stop)
     finally:
         if db is not None:
@@ -205,6 +220,7 @@ def run_to_folder(
         "completed": len(records) == total,
         "settings": s.to_dict(),
         "labeltool_db": labeltool_db_name(project) if s.save_labeltool_db else None,
+        "source_images": sources,
         "samples": records,
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -214,6 +230,28 @@ def run_to_folder(
 def labeltool_db_name(project: Project) -> str:
     stem = "".join(c if c.isalnum() or c in " -_" else "_" for c in project.name).strip() or "dataset"
     return f"{stem}.sqlite"
+
+
+def _write_sources(project: Project, out: Path, image_dir: str, db) -> list[dict]:
+    """Copy every project image into the dataset; label it good, or bad with its picked defects."""
+    written = []
+    used = set()
+    for entry in project.images:
+        src = Path(entry.path)
+        name = f"real_{src.stem}{src.suffix.lower()}"
+        n = 2
+        while name.lower() in used:
+            name = f"real_{src.stem}_{n}{src.suffix.lower()}"
+            n += 1
+        used.add(name.lower())
+        dest = out / image_dir / name
+        shutil.copyfile(src, dest)
+        img = project.load_pixels(entry.id)
+        mask = project.marked_mask(entry.id, img.shape[:2])
+        rel = dest.relative_to(out).as_posix()
+        db.add(rel, mask)
+        written.append({"file": rel, "source": src.name, "label": "bad" if mask.any() else "good"})
+    return written
 
 
 def _write_samples(gen, s, out: Path, image_dir: str, db, records: list, total: int, progress, stop) -> None:
