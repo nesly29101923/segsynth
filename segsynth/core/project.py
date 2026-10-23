@@ -64,6 +64,7 @@ class GenerationSettings:
     save_labeltool_db: bool = False
     labeltool_class_name: str = "defect"
     labeltool_class_color: str = "#ff5c6c"
+    labeltool_include_sources: bool = True
     output_ext: str = ".png"
     name_prefix: str = "synth"
 

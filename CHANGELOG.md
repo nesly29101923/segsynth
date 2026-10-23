@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0 — 2026-10-23
+
+- Label tool export now includes the source images: images without picked defects are labeled good (all background, anomaly "Normal"); images with picked defects are labeled bad with those defects as their mask. Option "Include source images", on by default.
+- Synthetic images are labeled bad (anomaly "Anomalous"); their mask now also contains the defects picked on their background image.
+- Synthetic images are spread evenly over all background images.
+
 ## 1.1.0 — 2026-10-23
 
 - New output option: label tool database (`.sqlite`). Each synthetic image is added as a TRAIN sample with the pasted defects as its semantic-segmentation label, using the tool's run-length mask format with CRC32. Images go to an `Images` folder next to the database.

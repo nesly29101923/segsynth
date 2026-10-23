@@ -22,6 +22,7 @@ BACKGROUND_ID = 0
 IGNORE_ID = 1
 DEFECT_ID = 2
 ANOMALY_NORMAL_ID = -1
+ANOMALY_ANOMALOUS_ID = -2
 
 MEMBERSHIPS = {
     "NONE": 1, "TRAIN": 2, "VALIDATE": 3, "TEST": 4,
@@ -139,7 +140,10 @@ class LabelToolWriter:
         self.db.commit()
 
     def add(self, rel_path: str, mask: np.ndarray) -> str:
-        """Add one image (path relative to the database folder) with its defect mask (non-zero = defect)."""
+        """Add one image (path relative to the database folder) with its defect mask (non-zero = defect).
+
+        Images without defect pixels are labeled good (anomaly "Normal"), others bad ("Anomalous").
+        """
         sample_id = _guid()
         path = rel_path.replace("/", "\\")
         stamp = _now()
@@ -152,7 +156,8 @@ class LabelToolWriter:
         cur.execute("INSERT INTO ClassificationAnnotations VALUES (?,?,?,?)",
                     (_guid(), sample_id, IGNORE_ID, self.membership))
         cur.execute("INSERT INTO AnomalyDetectionAnnotations VALUES (?,?,?,?)",
-                    (_guid(), sample_id, ANOMALY_NORMAL_ID, self.membership))
+                    (_guid(), sample_id, ANOMALY_ANOMALOUS_ID if labels.any() else ANOMALY_NORMAL_ID,
+                     self.membership))
         self.count += 1
         if self.count % 200 == 0:
             self.db.commit()

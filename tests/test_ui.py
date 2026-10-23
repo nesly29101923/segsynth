@@ -104,10 +104,11 @@ def test_full_workflow(app, window, tmp_path):
     save.zip.setChecked(True)
     save.save()
     dest = tmp_path / "export" / "UI test"
-    assert len(list((dest / "Images").glob("*.png"))) == 4
+    assert len(list((dest / "Images").glob("synth_*.png"))) == 4
+    assert len(list((dest / "Images").glob("real_*.png"))) == 2
     import sqlite3
     db = sqlite3.connect(dest / "UI test.sqlite")
-    assert db.execute("select count(*) from Samples").fetchone() == (4,)
+    assert db.execute("select count(*) from Samples").fetchone() == (6,)
     assert db.execute("select AnnotationLabelName from AnnotationLabelDefinitions where AnnotationLabelId=2").fetchone() == ("scratch",)
     db.close()
     assert (dest / "manifest.json").exists()
