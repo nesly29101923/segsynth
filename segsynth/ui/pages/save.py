@@ -31,7 +31,8 @@ class SavePage(QWidget):
         root.addWidget(page_header(
             "Save dataset",
             "Choose where the generated images go. The folder also gets a manifest.json describing every "
-            "synthetic image: background, source defect, position and the exact variation applied.",
+            "synthetic image: background, source defect, position and the exact variation applied. "
+            "If a label tool database was created, keep it next to its Images folder.",
         ))
 
         info = QVBoxLayout()
@@ -102,6 +103,8 @@ class SavePage(QWidget):
         else:
             s = m["settings"]
             extras = [x for x, on in (("masks", s["save_masks"]), ("review overlays", s["save_overlays"])) if on]
+            if m.get("labeltool_db"):
+                extras.append(f"label tool database {m['labeltool_db']}")
             self.summary.setText(
                 f"<b>{m['count']:,} synthetic images</b> ready"
                 + (f" · plus {' and '.join(extras)}" if extras else "")

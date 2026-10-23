@@ -61,6 +61,9 @@ class GenerationSettings:
     transform: TransformParams = field(default_factory=TransformParams)
     save_masks: bool = False
     save_overlays: bool = False
+    save_labeltool_db: bool = False
+    labeltool_class_name: str = "defect"
+    labeltool_class_color: str = "#ff5c6c"
     output_ext: str = ".png"
     name_prefix: str = "synth"
 

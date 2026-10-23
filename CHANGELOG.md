@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 — 2026-10-23
+
+- New output option: label tool database (`.sqlite`). Each synthetic image is added as a TRAIN sample with the pasted defects as its semantic-segmentation label, using the tool's run-length mask format with CRC32. Images go to an `Images` folder next to the database.
+- Configurable defect class name and colour for the exported database.
+- Image paths in `manifest.json` now always use forward slashes.
+
 ## 1.0.0 — 2026-10-23
 
 First release.
