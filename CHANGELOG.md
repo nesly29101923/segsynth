@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.0 — 2026-11-02
+
+- **AI tool ready export.** With "Generate a .sqlite file" the dataset is saved as a workspace the AI tool can train from directly: images in `DATA/synthetic/` and `DATA/background/`, the database in `META/`, plus `DATA_THUMB/`. Sample paths are relative to `DATA`, as the tool expects.
+- Images are split into TRAIN and VALIDATE (default 15 %, adjustable on the Save page), stratified over good / not good and image kind; the AI tool needs validation samples to train.
+- Database file names no longer contain spaces.
+- New `segsynth.core.export` module shared by the Save page and the command line (`segsynth generate` with the database option writes the same workspace).
+
 ## 1.4.0 — 2026-11-02
 
 - **Generate a .sqlite file** checkbox on the Save dataset page (with defect class name and colour). The label tool database is written at save time, so it can be added without regenerating. The option and class settings moved there from the Recipe page.

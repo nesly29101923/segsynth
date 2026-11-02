@@ -139,7 +139,7 @@ class LabelToolWriter:
         cur.executemany("INSERT INTO PropertyDefinitions VALUES (?,?,?,?,?)", TSNE_PROPERTIES)
         self.db.commit()
 
-    def add(self, rel_path: str, mask: np.ndarray) -> str:
+    def add(self, rel_path: str, mask: np.ndarray, membership: str | None = None) -> str:
         """Add one image (path relative to the database folder) with its defect mask (non-zero = defect).
 
         Images without defect pixels are labeled good (anomaly "Normal"), others bad ("Anomalous").
@@ -148,16 +148,17 @@ class LabelToolWriter:
         path = rel_path.replace("/", "\\")
         stamp = _now()
         labels = np.where(np.asarray(mask) > 0, DEFECT_ID, BACKGROUND_ID)
+        split = self.membership if membership is None else MEMBERSHIPS[membership]
         cur = self.db.cursor()
         cur.execute("INSERT INTO Samples VALUES (?,?,?,?,?,?,?)",
                     (sample_id, path, path, stamp, stamp, "", "Image"))
         cur.execute("INSERT INTO SemanticSegmentationAnnotations VALUES (?,?,?,?)",
-                    (_guid(), sample_id, encode_rle(labels), self.membership))
+                    (_guid(), sample_id, encode_rle(labels), split))
         cur.execute("INSERT INTO ClassificationAnnotations VALUES (?,?,?,?)",
-                    (_guid(), sample_id, IGNORE_ID, self.membership))
+                    (_guid(), sample_id, IGNORE_ID, split))
         cur.execute("INSERT INTO AnomalyDetectionAnnotations VALUES (?,?,?,?)",
                     (_guid(), sample_id, ANOMALY_ANOMALOUS_ID if labels.any() else ANOMALY_NORMAL_ID,
-                     self.membership))
+                     split))
         self.count += 1
         if self.count % 200 == 0:
             self.db.commit()
