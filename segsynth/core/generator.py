@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -16,8 +17,8 @@ from . import transform as tf
 from .background import BackgroundMode
 from .backgrounds import BackgroundComposer
 from .blend import BlendMode, blend
-from .imageio import max_value, read_mask, write_image
-from .labeltool import LabelToolWriter
+from .imageio import max_value, write_image
+from .export import export_dataset, label_path
 from .patch import DefectPatch, extract_patch
 from .placement import find_position
 from .project import DefectEntry, Project
@@ -233,12 +234,6 @@ class Generator:
 
 SYNTHETIC_DIR = "synthetic"
 BACKGROUND_DIR = "background"
-LABELS_DIR = ".labels"
-
-
-def label_path(root: Path, rel: str) -> Path:
-    """Where the label mask of an output image is stored inside a generation folder."""
-    return Path(root) / LABELS_DIR / f"{rel}.png"
 
 
 def run_to_folder(
@@ -251,10 +246,28 @@ def run_to_folder(
 ) -> dict:
     """Generate the dataset into out_dir.
 
-    Layout: synthetic/ (generated defect images), background/ (source and generated
-    backgrounds), manifest.json, and a hidden .labels/ folder with one mask per image.
-    With labeltool (default: the project setting) a label tool .sqlite is written as well.
+    Without a database: synthetic/, background/, manifest.json and a hidden .labels/ folder
+    with one mask per image (used to build a database later). With labeltool (default: the
+    project setting) out_dir becomes an AI tool workspace: DATA/, DATA_THUMB/, META/<db>.sqlite.
     """
+    s = project.settings
+    if not (s.save_labeltool_db if labeltool is None else labeltool):
+        return _generate(project, Path(out_dir), progress, stop, status)
+    with tempfile.TemporaryDirectory(prefix="segsynth_") as tmp:
+        manifest = _generate(project, Path(tmp), progress, stop, status)
+        if status:
+            status("Writing label tool database…")
+        return export_dataset(tmp, out_dir, manifest, project.name, True, s.labeltool_class_name,
+                              s.labeltool_class_color, s.labeltool_validate_percent, s.seed)
+
+
+def _generate(
+    project: Project,
+    out_dir: Path,
+    progress: Callable[[int, int, GeneratedSample], None] | None = None,
+    stop: threading.Event | None = None,
+    status: Callable[[str], None] | None = None,
+) -> dict:
     s = project.settings
     out = Path(out_dir)
     (out / SYNTHETIC_DIR).mkdir(parents=True, exist_ok=True)
@@ -294,29 +307,8 @@ def run_to_folder(
         "generated_backgrounds": backgrounds,
         "samples": records,
     }
-    if s.save_labeltool_db if labeltool is None else labeltool:
-        if status:
-            status("Writing label tool database…")
-        name = labeltool_db_name(project)
-        write_labeltool_db(out, files, out / name, s.labeltool_class_name, s.labeltool_class_color)
-        manifest["labeltool_db"] = name
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest
-
-
-def write_labeltool_db(root: str | Path, files: list[dict], db_path: str | Path,
-                       class_name: str = "defect", class_color: str = "#ff5c6c") -> int:
-    """Create a label tool database for every file listed in the manifest, using stored masks."""
-    root = Path(root)
-    with LabelToolWriter(db_path, class_name, class_color) as db:
-        for f in files:
-            db.add(f["file"], read_mask(label_path(root, f["file"])))
-        return db.count
-
-
-def labeltool_db_name(project: Project) -> str:
-    stem = "".join(c if c.isalnum() or c in " -_" else "_" for c in project.name).strip() or "dataset"
-    return f"{stem}.sqlite"
 
 
 def _store(out: Path, s, rel: str, mask: np.ndarray, kind: str, files: list[dict]) -> None:

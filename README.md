@@ -87,20 +87,34 @@ segsynth generate path/to/project/project.json output_folder [--seed 123] [--mas
 
 ## Output
 
+Without a database:
+
 ```
 my_dataset/
 ├── synthetic/        synth_00001.png …   generated defect images
-├── background/       real_*.png          your source images
-│                     bg_*.png            generated backgrounds
-├── my_dataset.sqlite (optional) label tool database
-├── masks/            (optional) 255 = defect
-├── overlays/         (optional) review images with the pasted area outlined
+├── background/       real_*.png, bg_*.png
 └── manifest.json
 ```
 
-Tick **Generate a .sqlite file** on the Save dataset page to write a label tool database next to the image folders. Every image becomes a TRAIN sample: background areas are labeled good, pasted defects and defects you picked are labeled with your defect class. Images without defects are good (anomaly "Normal"), images with defects are not good ("Anomalous"). The masks use the tool's run-length format with CRC32 and the schema matches settings version 14. Because labels are kept with every generated image, the database can be added at save time without regenerating.
+With **Generate a .sqlite file** (Save dataset page) the dataset is saved as a workspace the AI tool trains from directly:
 
-A source image with no picked defects is treated as good, so pick every real defect on images you use as backgrounds.
+```
+my_dataset/
+├── DATA/
+│   ├── synthetic/    synth_*.png
+│   └── background/   real_*.png, bg_*.png
+├── DATA_THUMB/
+├── META/
+│   └── my_dataset.sqlite      ← select this file in the AI tool
+└── manifest.json
+```
+
+- Sample paths in the database are relative to `DATA` (for example `synthetic\synth_00001.png`), which is how the tool resolves them from `META`.
+- Background areas are labeled good; pasted defects and defects you picked carry your defect class. Images without defects are good (anomaly "Normal"), images with defects are not good ("Anomalous").
+- Images are split into TRAIN and VALIDATE (15 % by default), balanced over good and not good.
+- Masks use the tool's run-length format with CRC32; the schema matches settings version 14.
+
+A source image with no picked defects is treated as good, so pick every real defect on images you use as backgrounds. Optional `masks/` and `overlays/` folders are placed next to `DATA`.
 
 ## Settings reference
 

@@ -66,6 +66,7 @@ class GenerationSettings:
     labeltool_class_name: str = "defect"
     labeltool_class_color: str = "#ff5c6c"
     labeltool_include_sources: bool = True
+    labeltool_validate_percent: float = 15.0
     output_ext: str = ".png"
     name_prefix: str = "synth"
 

@@ -74,16 +74,17 @@ def test_generator_writes_database(small_project, tmp_path):
     small_project.settings.save_masks = True
     out = tmp_path / "out"
     manifest = run_to_folder(small_project, out)
-    assert manifest["labeltool_db"] == "Synthetic set.sqlite"
-    assert len(list((out / "synthetic").glob("synth_*.png"))) == 5
-    c = sqlite3.connect(out / "Synthetic set.sqlite")
+    assert manifest["labeltool_db"] == "META/Synthetic_set.sqlite"
+    assert len(list((out / "DATA" / "synthetic").glob("synth_*.png"))) == 5
+    assert (out / "DATA_THUMB").is_dir()
+    c = sqlite3.connect(out / "META" / "Synthetic_set.sqlite")
     rows = c.execute("""select s.SampleFilePath, a.SemanticSegmentationRunLengthCode from Samples s
                         join SemanticSegmentationAnnotations a on a.LinkSampleId = s.SampleId
                         where s.SampleFilePath like 'synthetic\\synth_%'""").fetchall()
     assert len(rows) == 5
     for path, blob in rows:
         rel = path.replace("\\", "/")
-        img = read_image(out / rel)
+        img = read_image(out / "DATA" / rel)
         labels = decode_rle(blob)
         assert labels.shape == img.shape[:2]
         mask = read_mask(out / "masks" / (rel.split("/")[-1]))
@@ -108,7 +109,7 @@ def test_sources_good_and_bad(small_project, tmp_path):
     manifest = run_to_folder(small_project, out)
     labels = {x["source"]: x["label"] for x in manifest["source_images"]}
     assert labels == {"clean.png": "good", "defect.png": "bad"}
-    c = sqlite3.connect(out / f"{small_project.name}.sqlite")
+    c = sqlite3.connect(out / "META" / f"{small_project.name}.sqlite")
     rows = c.execute("""select s.SampleFilePath, a.SemanticSegmentationRunLengthCode, d.LinkAnnotationLabelId
                         from Samples s
                         join SemanticSegmentationAnnotations a on a.LinkSampleId = s.SampleId
@@ -123,7 +124,7 @@ def test_sources_good_and_bad(small_project, tmp_path):
     assert np.array_equal(bad > 0, defect.mask > 0)
     synth = [v for p, v in by_path.items() if "synth_" in p]
     assert all(m.any() and lab == -2 for m, lab in synth)
-    assert read_image(out / "background" / "real_clean.png").shape == read_image(small_project.images[0].path).shape
+    assert read_image(out / "DATA" / "background" / "real_clean.png").shape == read_image(small_project.images[0].path).shape
 
 
 def test_sources_can_be_excluded(small_project, tmp_path):
@@ -131,9 +132,9 @@ def test_sources_can_be_excluded(small_project, tmp_path):
     small_project.settings.labeltool_include_sources = False
     out = tmp_path / "out"
     run_to_folder(small_project, out)
-    c = sqlite3.connect(out / f"{small_project.name}.sqlite")
+    c = sqlite3.connect(out / "META" / f"{small_project.name}.sqlite")
     assert c.execute("select count(*) from Samples").fetchone() == (5,)
-    assert not list((out / "background").glob("real_*"))
+    assert not list((out / "DATA" / "background").glob("real_*"))
 
 
 def test_backgrounds_used_evenly(small_project, tmp_path):
@@ -144,7 +145,7 @@ def test_backgrounds_used_evenly(small_project, tmp_path):
 
 
 def test_database_written_later_from_stored_labels(small_project, tmp_path):
-    from segsynth.core.generator import label_path, write_labeltool_db
+    from segsynth.core.export import label_path, write_labeltool_db
     small_project.settings.save_labeltool_db = True
     out = tmp_path / "staging"
     manifest = run_to_folder(small_project, out, labeltool=False)
