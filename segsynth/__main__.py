@@ -34,9 +34,30 @@ def _cli(argv: list[str]) -> int:
     return 0
 
 
+def _prune(argv: list[str]) -> int:
+    from .core.export import prune_workspace
+
+    parser = argparse.ArgumentParser(
+        prog="segsynth prune",
+        description="Repair a saved workspace: remove real source images (real_*) and samples whose "
+                    "image file is missing from DATA, from both the database and the DATA folder.")
+    parser.add_argument("database", help="Path to the .sqlite file in the META folder")
+    parser.add_argument("--keep-real", action="store_true", help="Keep real_* images")
+    args = parser.parse_args(argv)
+    removed = prune_workspace(args.database, remove_real=not args.keep_real)
+    print(f"Removed {len(removed)} sample(s) from {args.database}")
+    for p in removed[:20]:
+        print("  " + p)
+    if len(removed) > 20:
+        print(f"  … and {len(removed) - 20} more")
+    return 0
+
+
 def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "generate":
         return _cli(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "prune":
+        return _prune(sys.argv[2:])
     from .app import run
     return run()
 

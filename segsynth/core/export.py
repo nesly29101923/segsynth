@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sqlite3
 from pathlib import Path
 
 import numpy as np
@@ -122,3 +123,47 @@ def export_dataset(
 
 def _image_dirs(manifest: dict) -> set[str]:
     return {f["file"].split("/")[0] for f in manifest.get("files", [])}
+
+
+ANNOTATION_TABLES = ("SemanticSegmentationAnnotations", "ClassificationAnnotations", "AnomalyDetectionAnnotations",
+                     "SampleProperties", "SampleToGroupConnections")
+
+
+def remove_samples(db_path: str | Path, should_remove) -> list[str]:
+    """Delete samples (and all rows linked to them) for which should_remove(path) is true."""
+    db = sqlite3.connect(str(db_path))
+    try:
+        rows = db.execute("SELECT SampleId, SampleFilePath FROM Samples").fetchall()
+        doomed = [(sid, path) for sid, path in rows if should_remove(path)]
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        for sid, _ in doomed:
+            for t in ANNOTATION_TABLES:
+                if t in tables:
+                    db.execute(f"DELETE FROM '{t}' WHERE LinkSampleId = ?", (sid,))
+            db.execute("DELETE FROM Samples WHERE SampleId = ?", (sid,))
+        db.commit()
+        if doomed:
+            db.execute("VACUUM")
+        return [p for _, p in doomed]
+    finally:
+        db.close()
+
+
+def prune_workspace(db_path: str | Path, remove_real: bool = True) -> list[str]:
+    """Repair a saved workspace: drop samples whose image is missing from DATA, and
+    (by default) real source images copied in by older versions (background\\real_*)."""
+    db_path = Path(db_path)
+    data_root = db_path.parent.parent / DATA_DIR
+
+    def doomed(path: str) -> bool:
+        rel = path.replace("\\", "/")
+        if remove_real and Path(rel).name.startswith("real_"):
+            return True
+        return not (data_root / rel).is_file()
+
+    removed = remove_samples(db_path, doomed)
+    for rel in removed:
+        f = data_root / rel.replace("\\", "/")
+        if f.is_file():
+            f.unlink()
+    return removed
