@@ -89,10 +89,6 @@ def test_full_workflow(app, window, tmp_path):
     recipe.scale.a.setValue(0.9)
     assert window.state.project.settings.transform.scale[0] == pytest.approx(0.9)
     recipe.preview()
-    recipe.labeltool.setChecked(True)
-    recipe.class_name.setText("scratch")
-    assert window.state.project.settings.save_labeltool_db
-    assert window.state.project.settings.labeltool_class_name == "scratch"
 
     window.go(STEP_GENERATE)
     gen = window.generate_page
@@ -104,11 +100,16 @@ def test_full_workflow(app, window, tmp_path):
     window.go(STEP_SAVE)
     save = window.save_page
     save.path.setText(str(tmp_path / "export"))
+    save.sqlite.setChecked(True)
+    save.class_name.setText("scratch")
+    assert window.state.project.settings.save_labeltool_db
+    assert window.state.project.settings.labeltool_class_name == "scratch"
     save.zip.setChecked(True)
     save.save()
     dest = tmp_path / "export" / "UI test"
-    assert len(list((dest / "Images").glob("synth_*.png"))) == 4
-    assert len(list((dest / "Images").glob("real_*.png"))) == 2
+    assert len(list((dest / "synthetic").glob("synth_*.png"))) == 4
+    assert len(list((dest / "background").glob("real_*.png"))) == 2
+    assert not (dest / ".labels").exists()
     import sqlite3
     db = sqlite3.connect(dest / "UI test.sqlite")
     assert db.execute("select count(*) from Samples").fetchone() == (6,)
@@ -210,7 +211,6 @@ def test_background_generation_workflow(app, window, tmp_path):
     window.go(STEP_RECIPE)
     window.recipe_page.bulk.setValue(5)
     window.recipe_page.bulk_apply.click()
-    window.recipe_page.labeltool.setChecked(True)
 
     window.go(STEP_GENERATE)
     gen = window.generate_page
@@ -223,9 +223,10 @@ def test_background_generation_workflow(app, window, tmp_path):
 
     window.go(STEP_SAVE)
     window.save_page.path.setText(str(tmp_path / "export"))
+    window.save_page.sqlite.setChecked(True)
     window.save_page.save()
     dest = tmp_path / "export" / "BG test"
-    assert len(list((dest / "Images").glob("bg_*.png"))) == 5
+    assert len(list((dest / "background").glob("bg_*.png"))) == 5
     import sqlite3
     db = sqlite3.connect(dest / "BG test.sqlite")
     assert db.execute("select count(*) from Samples").fetchone() == (4 + 5 + 5,)
@@ -233,3 +234,32 @@ def test_background_generation_workflow(app, window, tmp_path):
 
     path = window.state.project.save(tmp_path / "proj")
     assert Project.load(path).backgrounds == window.state.project.backgrounds
+
+
+def test_save_without_sqlite(app, window, tmp_path):
+    write_image(tmp_path / "clean.png", striped_surface(seed=1))
+    img, mask = add_scratch(striped_surface(seed=2))
+    write_image(tmp_path / "defect.png", img)
+    proj = Project(name="No DB")
+    proj.add_image(tmp_path / "clean.png")
+    src = proj.add_image(tmp_path / "defect.png")
+    proj.add_defect(src.id, cv2.dilate(mask, np.ones((5, 5), np.uint8)), count=3)
+    window.state.replace_project(proj)
+    window.go(STEP_GENERATE)
+    gen = window.generate_page
+    gen.run()
+    _wait(app, lambda: window.state.manifest is not None and gen.worker is None)
+    assert not list(window.state.staging.glob("*.sqlite"))
+    window.go(STEP_SAVE)
+    save = window.save_page
+    assert not save.sqlite.isChecked() and not save.class_name.isEnabled()
+    save.path.setText(str(tmp_path / "out"))
+    save.save()
+    dest = tmp_path / "out" / "No DB"
+    assert sorted(p.name for p in dest.iterdir()) == ["background", "manifest.json", "synthetic"]
+    assert len(list((dest / "synthetic").iterdir())) == 3
+    save.sqlite.setChecked(True)
+    save.save()
+    assert (dest / "No DB.sqlite").exists()
+    import json
+    assert json.loads((dest / "manifest.json").read_text())["labeltool_db"] == "No DB.sqlite"

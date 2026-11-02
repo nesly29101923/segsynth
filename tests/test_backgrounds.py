@@ -225,4 +225,4 @@ def test_export_can_skip_backgrounds(tmp_path):
     proj = _with_defect(make_project(tmp_path, n=3, include_in_dataset=False))
     manifest = run_to_folder(proj, tmp_path / "o")
     assert manifest["generated_backgrounds"] == []
-    assert not list((tmp_path / "o" / "images").glob("bg_*"))
+    assert not list((tmp_path / "o" / "background").glob("bg_*"))

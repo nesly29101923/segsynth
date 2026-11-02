@@ -17,7 +17,7 @@ def test_generates_requested_count(small_project, tmp_path):
     out = tmp_path / "out"
     manifest = run_to_folder(small_project, out)
     assert manifest["count"] == 5 and manifest["completed"]
-    files = sorted((out / "images").glob("*.png"))
+    files = sorted((out / "synthetic").glob("*.png"))
     assert len(files) == 5
     assert not (out / "masks").exists()
     data = json.loads((out / "manifest.json").read_text())
@@ -30,8 +30,9 @@ def test_masks_and_overlays(small_project, tmp_path):
     small_project.settings.save_overlays = True
     out = tmp_path / "out"
     run_to_folder(small_project, out)
-    masks = sorted((out / "masks").glob("*.png"))
+    masks = sorted((out / "masks").glob("synth_*.png"))
     assert len(masks) == 5 and len(list((out / "overlays").glob("*.jpg"))) == 5
+    assert len(list((out / "masks").glob("real_*.png"))) == 2
     for m in masks:
         assert read_image(m).max() == 255
 
@@ -40,8 +41,8 @@ def test_deterministic_with_seed(small_project, tmp_path):
     a = run_to_folder(small_project, tmp_path / "a")
     b = run_to_folder(small_project, tmp_path / "b")
     assert [s["defects"] for s in a["samples"]] == [s["defects"] for s in b["samples"]]
-    for fa in (tmp_path / "a" / "images").glob("*.png"):
-        assert np.array_equal(read_image(fa), read_image(tmp_path / "b" / "images" / fa.name))
+    for fa in (tmp_path / "a" / "synthetic").glob("*.png"):
+        assert np.array_equal(read_image(fa), read_image(tmp_path / "b" / "synthetic" / fa.name))
 
 
 def test_different_seed_differs(small_project, tmp_path):
@@ -110,4 +111,4 @@ def test_cli(small_project, tmp_path):
     r = subprocess.run([sys.executable, "-m", "segsynth", "generate", str(path), str(out), "--masks"],
                        cwd=root, capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stderr
-    assert len(list((out / "masks").glob("*.png"))) == 5
+    assert len(list((out / "masks").glob("synth_*.png"))) == 5
