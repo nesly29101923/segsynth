@@ -250,17 +250,11 @@ class RecipePage(QWidget):
         self.masks = QCheckBox("Also save masks")
         self.masks.setToolTip("Binary masks of the pasted defects (255 = defect). Off when you label by hand.")
         self.overlays = QCheckBox("Also save review overlays")
-        self.include_sources = QCheckBox("Include source images in the dataset")
-        self.include_sources.setToolTip(
-            "Copies every source image into the background folder of the dataset.\n"
-            "Images with no picked defects are labeled good; images with picked defects are\n"
-            "labeled not good with those defects as their mask.")
         f.addRow(self._tip("Random seed", "Same seed and settings give exactly the same dataset."), self.seed)
         f.addRow("File prefix", self.prefix)
         f.addRow("Format", self.ext)
         f.addRow("", self.masks)
         f.addRow("", self.overlays)
-        f.addRow("", self.include_sources)
         pl.addWidget(g)
         reset = QPushButton("Reset settings to defaults")
         reset.setObjectName("Ghost")
@@ -278,7 +272,7 @@ class RecipePage(QWidget):
             w.connect(self._settings_from_ui)
         for w in (self.elastic, self.jitter, self.gap, self.bg_size, self.feather, self.seed):
             w.valueChanged.connect(self._settings_from_ui)
-        for w in (self.flip_h, self.flip_v, self.avoid, self.masks, self.overlays, self.include_sources,
+        for w in (self.flip_h, self.flip_v, self.avoid, self.masks, self.overlays,
                   *self.blend_checks.values()):
             w.toggled.connect(self._settings_from_ui)
         for w in (self.placement, self.bg_mode, self.ext):
@@ -330,7 +324,6 @@ class RecipePage(QWidget):
         self.ext.setCurrentIndex(max(0, self.ext.findData(s.output_ext)))
         self.masks.setChecked(s.save_masks)
         self.overlays.setChecked(s.save_overlays)
-        self.include_sources.setChecked(s.labeltool_include_sources)
         self._loading = False
 
     def _settings_from_ui(self, *_) -> None:
@@ -361,7 +354,6 @@ class RecipePage(QWidget):
         s.name_prefix = "".join(c for c in self.prefix.currentText().strip() if c.isalnum() or c in "-_") or "synth"
         s.output_ext = self.ext.currentData()
         s.save_masks, s.save_overlays = self.masks.isChecked(), self.overlays.isChecked()
-        s.labeltool_include_sources = self.include_sources.isChecked()
         self.state.settingsChanged.emit()
 
     def _reset_defaults(self) -> None:

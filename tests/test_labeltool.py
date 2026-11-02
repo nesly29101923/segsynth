@@ -103,38 +103,24 @@ def test_settings_roundtrip():
     assert GenerationSettings.from_dict(s.to_dict()) == s
 
 
-def test_sources_good_and_bad(small_project, tmp_path):
+def test_real_images_never_exported(small_project, tmp_path):
     small_project.settings.save_labeltool_db = True
     out = tmp_path / "out"
     manifest = run_to_folder(small_project, out)
-    labels = {x["source"]: x["label"] for x in manifest["source_images"]}
-    assert labels == {"clean.png": "good", "defect.png": "bad"}
+    assert all(f["kind"] == "synthetic" for f in manifest["files"])
+    assert not list((out / "DATA").rglob("real_*"))
     c = sqlite3.connect(out / "META" / f"{small_project.name}.sqlite")
     rows = c.execute("""select s.SampleFilePath, a.SemanticSegmentationRunLengthCode, d.LinkAnnotationLabelId
                         from Samples s
                         join SemanticSegmentationAnnotations a on a.LinkSampleId = s.SampleId
                         join AnomalyDetectionAnnotations d on d.LinkSampleId = s.SampleId""").fetchall()
-    assert len(rows) == 5 + 2
-    by_path = {p: (decode_rle(b), lab) for p, b, lab in rows}
-    clean, clean_lab = by_path["background\\real_clean.png"]
-    assert not clean.any() and clean_lab == -1
-    bad, bad_lab = by_path["background\\real_defect.png"]
-    assert bad.any() and bad_lab == -2
-    defect = small_project.defects[0]
-    assert np.array_equal(bad > 0, defect.mask > 0)
-    synth = [v for p, v in by_path.items() if "synth_" in p]
-    assert all(m.any() and lab == -2 for m, lab in synth)
-    assert read_image(out / "DATA" / "background" / "real_clean.png").shape == read_image(small_project.images[0].path).shape
+    assert len(rows) == 5
+    assert all(p.startswith("synthetic\\") and decode_rle(b).any() and lab == -2 for p, b, lab in rows)
 
 
-def test_sources_can_be_excluded(small_project, tmp_path):
-    small_project.settings.save_labeltool_db = True
-    small_project.settings.labeltool_include_sources = False
-    out = tmp_path / "out"
-    run_to_folder(small_project, out)
-    c = sqlite3.connect(out / "META" / f"{small_project.name}.sqlite")
-    assert c.execute("select count(*) from Samples").fetchone() == (5,)
-    assert not list((out / "DATA" / "background").glob("real_*"))
+def test_old_project_setting_is_ignored(tmp_path):
+    s = GenerationSettings.from_dict({"labeltool_include_sources": True, "seed": 3})
+    assert s.seed == 3 and not hasattr(s, "labeltool_include_sources")
 
 
 def test_backgrounds_used_evenly(small_project, tmp_path):
@@ -151,12 +137,12 @@ def test_database_written_later_from_stored_labels(small_project, tmp_path):
     manifest = run_to_folder(small_project, out, labeltool=False)
     assert manifest["labeltool_db"] is None and not list(out.glob("*.sqlite"))
     kinds = [f["kind"] for f in manifest["files"]]
-    assert kinds.count("source") == 2 and kinds.count("synthetic") == 5
+    assert kinds == ["synthetic"] * 5
     for f in manifest["files"]:
         assert label_path(out, f["file"]).exists()
         assert f["file"].split("/")[0] == ("synthetic" if f["kind"] == "synthetic" else "background")
     n = write_labeltool_db(out, manifest["files"], tmp_path / "later.sqlite", "scratch", "#00ff00")
-    assert n == 7
+    assert n == 5
     c = sqlite3.connect(tmp_path / "later.sqlite")
     rows = c.execute("""select s.SampleFilePath, a.SemanticSegmentationRunLengthCode, d.LinkAnnotationLabelId
                         from Samples s

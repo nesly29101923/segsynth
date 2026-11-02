@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.1 — 2026-11-02
+
+- **Real source images are no longer copied into the dataset or the database.** They can hold defects nobody labeled, which taught the model those defects are background. The dataset now contains only synthetic images (not good) and generated backgrounds (good). The "Include source images" option is removed.
+- New repair command for workspaces saved with 1.4/1.5.0: `python -m segsynth prune "<workspace>\META\<name>.sqlite"` removes the `real_*` images and any sample whose image file is missing, from both the database and `DATA`.
+
 ## 1.5.0 — 2026-11-02
 
 - **AI tool ready export.** With "Generate a .sqlite file" the dataset is saved as a workspace the AI tool can train from directly: images in `DATA/synthetic/` and `DATA/background/`, the database in `META/`, plus `DATA_THUMB/`. Sample paths are relative to `DATA`, as the tool expects.

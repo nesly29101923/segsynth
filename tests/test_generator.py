@@ -32,7 +32,7 @@ def test_masks_and_overlays(small_project, tmp_path):
     run_to_folder(small_project, out)
     masks = sorted((out / "masks").glob("synth_*.png"))
     assert len(masks) == 5 and len(list((out / "overlays").glob("*.jpg"))) == 5
-    assert len(list((out / "masks").glob("real_*.png"))) == 2
+    assert not list((out / "masks").glob("real_*.png"))
     for m in masks:
         assert read_image(m).max() == 255
 
