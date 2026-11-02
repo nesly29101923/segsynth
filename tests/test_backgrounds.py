@@ -208,14 +208,14 @@ def test_export_labels_backgrounds_good(tmp_path):
     manifest = run_to_folder(proj, out)
     bgs = manifest["generated_backgrounds"]
     assert len(bgs) == 6
-    c = sqlite3.connect(out / "bg.sqlite")
+    c = sqlite3.connect(out / "META" / "bg.sqlite")
     rows = dict(c.execute("""select s.SampleFilePath, d.LinkAnnotationLabelId from Samples s
                              join AnomalyDetectionAnnotations d on d.LinkSampleId = s.SampleId""").fetchall())
     assert len(rows) == 3 + 6 + 6
     for b in bgs:
         key = b["file"].replace("/", "\\")
         assert rows[key] == (-2 if b["label"] == "bad" else -1)
-        assert read_image(out / b["file"]).shape == proj.load_pixels(proj.images[0].id).shape
+        assert read_image(out / "DATA" / b["file"]).shape == proj.load_pixels(proj.images[0].id).shape
     blob = c.execute("select SemanticSegmentationRunLengthCode from SemanticSegmentationAnnotations a "
                      "join Samples s on s.SampleId = a.LinkSampleId where s.SampleFilePath like '%bg_00001%'").fetchone()[0]
     assert decode_rle(blob).shape == (200, 240)

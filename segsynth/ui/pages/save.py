@@ -1,18 +1,18 @@
 """Last step — copy the generated dataset to its final location, optionally with a label tool database."""
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QColorDialog, QFileDialog, QHBoxLayout, QLineEdit, QMessageBox, QPushButton,
-    QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QColorDialog, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLineEdit, QMessageBox,
+    QPushButton, QVBoxLayout, QWidget,
 )
 
-from ...core.generator import BACKGROUND_DIR, SYNTHETIC_DIR, labeltool_db_name, write_labeltool_db
+from ...core.export import DATA_DIR, META_DIR, THUMB_DIR, db_file_name, export_dataset
+from ...core.generator import BACKGROUND_DIR, SYNTHETIC_DIR
 from ..qt_utils import card, label, page_header
 from ..state import AppState
 
@@ -34,8 +34,8 @@ class SavePage(QWidget):
         root.addWidget(page_header(
             "Save dataset",
             f"Synthetic images are saved in “{SYNTHETIC_DIR}”, source and generated backgrounds in "
-            f"“{BACKGROUND_DIR}”. A manifest.json describes every image: background, source defect, "
-            "position and the exact variation applied.",
+            f"“{BACKGROUND_DIR}”. With a .sqlite file both go into a {DATA_DIR} folder so the AI tool "
+            "can train from it directly. A manifest.json describes every image.",
         ))
 
         info = QVBoxLayout()
@@ -68,13 +68,15 @@ class SavePage(QWidget):
         db.setContentsMargins(18, 14, 18, 16)
         db.setSpacing(10)
         db.addWidget(label("LABEL TOOL", "SectionLabel"))
-        self.sqlite = QCheckBox("Generate a .sqlite file")
-        self.sqlite.setToolTip("Creates a label tool database next to the image folders.")
+        self.sqlite = QCheckBox("Generate a .sqlite file (ready for the AI tool)")
+        self.sqlite.setToolTip("Saves the dataset as a workspace: images in DATA, the database in META.\n"
+                               "Select the .sqlite in META with the AI tool to train.")
         db.addWidget(self.sqlite)
         db.addWidget(label(
-            "Every saved image becomes a TRAIN sample. Background areas are labeled good; pasted defects "
-            "and defects you picked are labeled with the defect class. Images without defects are good, "
-            "images with defects are not good.", "Muted", wrap=True))
+            f"The dataset is saved as a workspace: images in {DATA_DIR}\\, the database in {META_DIR}\\. "
+            "Background areas are labeled good; pasted defects and defects you picked are labeled with "
+            "the defect class. Images without defects are good, images with defects are not good. "
+            "Images are split into TRAIN and VALIDATE, balanced over good and not good.", "Muted", wrap=True))
         class_row = QHBoxLayout()
         class_row.setSpacing(8)
         class_row.addWidget(label("Defect class", "Muted"))
@@ -86,6 +88,15 @@ class SavePage(QWidget):
         self.class_color.setToolTip("Colour of the defect class in the label tool.")
         class_row.addWidget(self.class_name)
         class_row.addWidget(self.class_color)
+        class_row.addSpacing(18)
+        class_row.addWidget(label("Validation", "Muted"))
+        self.validate = QDoubleSpinBox()
+        self.validate.setRange(0, 50)
+        self.validate.setDecimals(0)
+        self.validate.setSingleStep(5)
+        self.validate.setSuffix(" %")
+        self.validate.setToolTip("Share of images marked VALIDATE. The AI tool needs validation images to train.")
+        class_row.addWidget(self.validate)
         class_row.addStretch(1)
         db.addLayout(class_row)
         root.addWidget(card(db))
@@ -111,6 +122,7 @@ class SavePage(QWidget):
         self.subfolder.toggled.connect(self._update)
         self.sqlite.toggled.connect(self._settings_from_ui)
         self.class_name.textChanged.connect(self._settings_from_ui)
+        self.validate.valueChanged.connect(self._settings_from_ui)
         self.class_color.clicked.connect(self._pick_color)
         state.datasetChanged.connect(self._update)
         state.projectReplaced.connect(self._load_settings)
@@ -122,6 +134,7 @@ class SavePage(QWidget):
         self._loading = True
         self.sqlite.setChecked(s.save_labeltool_db)
         self.class_name.setText(s.labeltool_class_name)
+        self.validate.setValue(s.labeltool_validate_percent)
         self._show_color(s.labeltool_class_color)
         self._loading = False
         self._update()
@@ -132,6 +145,7 @@ class SavePage(QWidget):
         s = self.state.project.settings
         s.save_labeltool_db = self.sqlite.isChecked()
         s.labeltool_class_name = self.class_name.text().strip() or "defect"
+        s.labeltool_validate_percent = self.validate.value()
         self.state.mark_dirty()
         self._update()
 
@@ -165,6 +179,7 @@ class SavePage(QWidget):
         on = self.sqlite.isChecked()
         self.class_name.setEnabled(on)
         self.class_color.setEnabled(on)
+        self.validate.setEnabled(on)
         m = self.state.manifest
         if m is None:
             self.summary.setText("No dataset yet. Generate one first.")
@@ -182,11 +197,12 @@ class SavePage(QWidget):
                 + ("" if m["completed"] else " · <span style='color:#e3b341'>generation was cancelled early</span>"))
         dest = self.destination()
         if dest:
-            lines = [f"Will be saved to: {dest}",
-                     f"    {SYNTHETIC_DIR}\\   {BACKGROUND_DIR}\\   manifest.json"]
             if on:
-                lines[-1] += f"   {labeltool_db_name(self.state.project)}"
-            self.target_preview.setText("\n".join(lines))
+                layout = (f"    {DATA_DIR}\\{SYNTHETIC_DIR}\\   {DATA_DIR}\\{BACKGROUND_DIR}\\   {THUMB_DIR}\\   "
+                          f"{META_DIR}\\{db_file_name(self.state.project.name)}   manifest.json")
+            else:
+                layout = f"    {SYNTHETIC_DIR}\\   {BACKGROUND_DIR}\\   manifest.json"
+            self.target_preview.setText(f"Will be saved to: {dest}\n{layout}")
         else:
             self.target_preview.setText("")
         self.save_btn.setEnabled(m is not None and dest is not None)
@@ -204,25 +220,15 @@ class SavePage(QWidget):
                 return
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            dest.mkdir(parents=True, exist_ok=True)
-            for item in src.iterdir():
-                if item.name.startswith(".") or item.name == "manifest.json":
-                    continue
-                target = dest / item.name
-                if item.is_dir():
-                    shutil.copytree(item, target, dirs_exist_ok=True)
-                else:
-                    shutil.copy2(item, target)
-            out_manifest = dict(manifest)
-            db_name = None
-            if self.sqlite.isChecked():
-                s = self.state.project.settings
-                db_name = labeltool_db_name(self.state.project)
-                write_labeltool_db(src, manifest.get("files", []), dest / db_name,
-                                   s.labeltool_class_name, s.labeltool_class_color)
-            out_manifest["labeltool_db"] = db_name
-            (dest / "manifest.json").write_text(json.dumps(out_manifest, indent=2), encoding="utf-8")
-            text = f"Saved to {dest}" + (f" with {db_name}" if db_name else "")
+            s = self.state.project.settings
+            out = export_dataset(src, dest, manifest, self.state.project.name, self.sqlite.isChecked(),
+                                 s.labeltool_class_name, s.labeltool_class_color,
+                                 s.labeltool_validate_percent, s.seed)
+            text = f"Saved to {dest}"
+            if out["labeltool_db"]:
+                sp = out["splits"]
+                text += (f" · database {out['labeltool_db']} ({sp['TRAIN']:,} train, "
+                         f"{sp['VALIDATE']:,} validate)")
             if self.zip.isChecked():
                 archive = shutil.make_archive(str(dest), "zip", root_dir=dest)
                 text += f" and {Path(archive).name}"

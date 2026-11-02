@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (
     QProgressBar, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ...core.generator import GenerationError, label_path, list_targets, make_composer, run_to_folder, validate
+from ...core.export import label_path
+from ...core.generator import GenerationError, list_targets, make_composer, run_to_folder, validate
 from ...core.imageio import read_image, read_mask
 from ..canvas import MaskCanvas, Tool
 from ..qt_utils import card, label, page_header, thumbnail, untinted_icon

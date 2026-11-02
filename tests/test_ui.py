@@ -107,11 +107,11 @@ def test_full_workflow(app, window, tmp_path):
     save.zip.setChecked(True)
     save.save()
     dest = tmp_path / "export" / "UI test"
-    assert len(list((dest / "synthetic").glob("synth_*.png"))) == 4
-    assert len(list((dest / "background").glob("real_*.png"))) == 2
+    assert len(list((dest / "DATA" / "synthetic").glob("synth_*.png"))) == 4
+    assert len(list((dest / "DATA" / "background").glob("real_*.png"))) == 2
     assert not (dest / ".labels").exists()
     import sqlite3
-    db = sqlite3.connect(dest / "UI test.sqlite")
+    db = sqlite3.connect(dest / "META" / "UI_test.sqlite")
     assert db.execute("select count(*) from Samples").fetchone() == (6,)
     assert db.execute("select AnnotationLabelName from AnnotationLabelDefinitions where AnnotationLabelId=2").fetchone() == ("scratch",)
     db.close()
@@ -226,9 +226,9 @@ def test_background_generation_workflow(app, window, tmp_path):
     window.save_page.sqlite.setChecked(True)
     window.save_page.save()
     dest = tmp_path / "export" / "BG test"
-    assert len(list((dest / "background").glob("bg_*.png"))) == 5
+    assert len(list((dest / "DATA" / "background").glob("bg_*.png"))) == 5
     import sqlite3
-    db = sqlite3.connect(dest / "BG test.sqlite")
+    db = sqlite3.connect(dest / "META" / "BG_test.sqlite")
     assert db.execute("select count(*) from Samples").fetchone() == (4 + 5 + 5,)
     db.close()
 
@@ -260,6 +260,6 @@ def test_save_without_sqlite(app, window, tmp_path):
     assert len(list((dest / "synthetic").iterdir())) == 3
     save.sqlite.setChecked(True)
     save.save()
-    assert (dest / "No DB.sqlite").exists()
+    assert (dest / "META" / "No_DB.sqlite").exists()
     import json
-    assert json.loads((dest / "manifest.json").read_text())["labeltool_db"] == "No DB.sqlite"
+    assert json.loads((dest / "manifest.json").read_text())["labeltool_db"] == "META/No_DB.sqlite"
