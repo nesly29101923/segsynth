@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0 — 2026-11-02
+
+- **Generate a .sqlite file** checkbox on the Save dataset page (with defect class name and colour). The label tool database is written at save time, so it can be added without regenerating. The option and class settings moved there from the Recipe page.
+- Dataset layout: `synthetic/` for generated defect images, `background/` for source images and generated backgrounds.
+- Every generated image keeps its label mask, so all saved images are labeled: background areas good, defect pixels with the defect class; images without defects are good, images with defects are not good.
+- Generate page statistics refresh whenever the page is shown.
+
 ## 1.3.0 — 2026-11-02
 
 - New optional step **Background generating**, enabled with "Create background images" on the Source images page. Images are cut into 2–8 pieces (horizontal or vertical cuts), the user clicks the pieces that are not good, and the good pieces of different images are stitched into new backgrounds.

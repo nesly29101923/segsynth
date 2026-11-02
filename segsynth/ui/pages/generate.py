@@ -13,13 +13,11 @@ from PySide6.QtWidgets import (
     QProgressBar, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ...core.generator import GenerationError, list_targets, make_composer, run_to_folder, validate
-from ...core.imageio import read_image, read_mask, write_image
+from ...core.generator import GenerationError, label_path, list_targets, make_composer, run_to_folder, validate
+from ...core.imageio import read_image, read_mask
 from ..canvas import MaskCanvas, Tool
 from ..qt_utils import card, label, page_header, thumbnail, untinted_icon
 from ..state import AppState
-
-PREVIEW_MASKS = ".preview_masks"
 
 
 class GenerationWorker(QThread):
@@ -35,15 +33,12 @@ class GenerationWorker(QThread):
         self.stop = threading.Event()
 
     def run(self) -> None:
-        pm = self.out_dir / PREVIEW_MASKS
-
         def on_progress(done, total, sample):
-            name = Path(sample.files["image"]).stem
-            write_image(pm / f"{name}.png", sample.mask * 255)
             self.progressed.emit(done, total, thumbnail(sample.image, 200), sample.files["image"])
 
         try:
-            manifest = run_to_folder(self.project, self.out_dir, on_progress, self.stop, self.status.emit)
+            manifest = run_to_folder(self.project, self.out_dir, on_progress, self.stop, self.status.emit,
+                                     labeltool=False)
             self.finished_ok.emit(manifest)
         except GenerationError as exc:
             self.failed.emit(str(exc))
@@ -164,6 +159,10 @@ class GeneratePage(QWidget):
             if self.state.manifest is None:
                 self.status.setText(problems[0] if problems else "Ready.")
 
+    def showEvent(self, e) -> None:
+        super().showEvent(e)
+        self.refresh_stats()
+
     def _on_dataset_changed(self) -> None:
         if self.state.staging is None and self.worker is None:
             self.gallery.clear()
@@ -246,6 +245,6 @@ class GeneratePage(QWidget):
         if self.state.staging is None:
             return
         rel = Path(item.data(Qt.UserRole))
-        mpath = self.state.staging / PREVIEW_MASKS / f"{rel.stem}.png"
+        mpath = label_path(self.state.staging, rel.as_posix())
         mask = read_mask(mpath) if mpath.exists() else None
         ResultViewer(read_image(self.state.staging / rel), mask, rel.name, self).exec()

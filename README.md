@@ -15,7 +15,7 @@ When only a handful of defect images exist, a segmentation model sees each defec
 - **Placement control.** Anywhere, same column, same row, or near the original spot, with minimum gaps and avoidance of already-marked defects.
 - **Multiple blending methods.** Texture-preserving add, Poisson (normal / mixed) and soft paste; mix several to diversify the dataset.
 - **Reproducible.** Every run writes a `manifest.json` with the background, source defect, position and the exact parameters of every paste. Same seed + settings = identical dataset.
-- **Label tool export.** Optionally writes a label tool database (`.sqlite`) with every synthetic image as a TRAIN sample and its pasted defects as the segmentation label.
+- **Label tool export.** Optionally writes a label tool database (`.sqlite`) with every image as a TRAIN sample: background good, defects labeled.
 - **Works offline.** NumPy + OpenCV + Qt. 8/16-bit, grayscale or color, PNG/TIFF/BMP/JPEG.
 
 ## Workflow
@@ -89,26 +89,18 @@ segsynth generate path/to/project/project.json output_folder [--seed 123] [--mas
 
 ```
 my_dataset/
-├── images/      synth_00001.png …
-├── masks/       (optional) 255 = pasted defect
-├── overlays/    (optional) review images with the pasted area outlined
+├── synthetic/        synth_00001.png …   generated defect images
+├── background/       real_*.png          your source images
+│                     bg_*.png            generated backgrounds
+├── my_dataset.sqlite (optional) label tool database
+├── masks/            (optional) 255 = defect
+├── overlays/         (optional) review images with the pasted area outlined
 └── manifest.json
 ```
 
-With **Also create label tool database** enabled, the layout matches what the label tool expects:
+Tick **Generate a .sqlite file** on the Save dataset page to write a label tool database next to the image folders. Every image becomes a TRAIN sample: background areas are labeled good, pasted defects and defects you picked are labeled with your defect class. Images without defects are good (anomaly "Normal"), images with defects are not good ("Anomalous"). The masks use the tool's run-length format with CRC32 and the schema matches settings version 14. Because labels are kept with every generated image, the database can be added at save time without regenerating.
 
-```
-my_dataset/
-├── Images/              synth_00001.png …
-├── my_dataset.sqlite    one TRAIN sample per image, pasted defects labeled with your class name
-└── manifest.json
-```
-
-Source images are copied in as `real_*.png`: images with no picked defects are labeled **good**, images with picked defects **bad** with those defects as their mask. Synthetic images are labeled **bad**; their mask holds the pasted defects plus any defects picked on their background. Synthetic images are spread evenly over all background images.
-
-Open the `.sqlite` in the label tool and the images appear already annotated. The masks are stored in the tool's own run-length format (with CRC32), the schema matches settings version 14, and classification/anomaly annotations get the tool's defaults.
-
-Masks cover only the *pasted* defects. Defects that were already present in a defective background image are not in the mask, so label the final dataset yourself or merge with your existing annotations.
+A source image with no picked defects is treated as good, so pick every real defect on images you use as backgrounds.
 
 ## Settings reference
 
@@ -125,7 +117,7 @@ Masks cover only the *pasted* defects. Defects that were already present in a de
 | Texture window | Length of the background window; should be larger than the defect. |
 | Edge softness | Feathering of the paste boundary. |
 | Defects per image | 1 = only the recipe defect; higher adds random extra defects. |
-| Label tool database | Writes `<dataset>.sqlite` plus an `Images` folder; set the defect class name and colour. |
+| Generate a .sqlite file | On the Save page: writes `<dataset>.sqlite`; set the defect class name and colour there. |
 
 ## Development
 
