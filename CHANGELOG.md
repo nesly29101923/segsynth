@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0 — 2026-11-02
+
+- New optional step **Background generating**, enabled with "Create background images" on the Source images page. Images are cut into 2–8 pieces (horizontal or vertical cuts), the user clicks the pieces that are not good, and the good pieces of different images are stitched into new backgrounds.
+- Pieces keep their position; every source is aligned to the first image before stitching, and seams are cross-faded over an adjustable band so no seam line appears.
+- All combinations of good pieces from at least two different images are used, up to a configurable maximum (random selection above it).
+- Generated backgrounds receive synthetic defects like any other background and are added to the dataset (and label tool database) as good images; defects picked on a source follow its pieces and are labeled.
+- Live preview with full-resolution viewer; settings and rejected pieces are saved in the project.
+
 ## 1.2.0 — 2026-10-23
 
 - Label tool export now includes the source images: images without picked defects are labeled good (all background, anomaly "Normal"); images with picked defects are labeled bad with those defects as their mask. Option "Include source images", on by default.

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QProgressBar, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ...core.generator import GenerationError, run_to_folder, validate
+from ...core.generator import GenerationError, list_targets, make_composer, run_to_folder, validate
 from ...core.imageio import read_image, read_mask, write_image
 from ..canvas import MaskCanvas, Tool
 from ..qt_utils import card, label, page_header, thumbnail, untinted_icon
@@ -24,6 +24,7 @@ PREVIEW_MASKS = ".preview_masks"
 
 class GenerationWorker(QThread):
     progressed = Signal(int, int, object, str)
+    status = Signal(str)
     failed = Signal(str)
     finished_ok = Signal(dict)
 
@@ -42,7 +43,7 @@ class GenerationWorker(QThread):
             self.progressed.emit(done, total, thumbnail(sample.image, 200), sample.files["image"])
 
         try:
-            manifest = run_to_folder(self.project, self.out_dir, on_progress, self.stop)
+            manifest = run_to_folder(self.project, self.out_dir, on_progress, self.stop, self.status.emit)
             self.finished_ok.emit(manifest)
         except GenerationError as exc:
             self.failed.emit(str(exc))
@@ -51,18 +52,19 @@ class GenerationWorker(QThread):
 
 
 class ResultViewer(QDialog):
-    def __init__(self, image_path: Path, mask_path: Path, parent=None):
+    def __init__(self, image, mask, title: str, parent=None, highlight_text: str = "Highlight defects"):
         super().__init__(parent)
-        self.setWindowTitle(image_path.name)
+        self.setWindowTitle(title)
         self.resize(1200, 820)
         lay = QVBoxLayout(self)
         self.canvas = MaskCanvas()
         self.canvas.set_tool(Tool.PAN)
-        self.canvas.set_image(read_image(image_path))
-        self.mask = read_mask(mask_path) if mask_path.exists() else None
+        self.canvas.set_image(image)
+        self.mask = mask if mask is not None and mask.any() else None
         lay.addWidget(self.canvas, 1)
         row = QHBoxLayout()
-        self.show_area = QCheckBox("Highlight pasted defects")
+        self.show_area = QCheckBox(highlight_text)
+        self.show_area.setEnabled(self.mask is not None)
         self.show_area.toggled.connect(self._toggle)
         row.addWidget(self.show_area)
         row.addStretch(1)
@@ -130,7 +132,8 @@ class GeneratePage(QWidget):
         self.start.clicked.connect(self.run)
         self.cancel.clicked.connect(self.stop)
         self.gallery.itemDoubleClicked.connect(self._open)
-        for sig in (state.defectsChanged, state.imagesChanged, state.settingsChanged, state.projectReplaced):
+        for sig in (state.defectsChanged, state.imagesChanged, state.settingsChanged, state.projectReplaced,
+                    state.backgroundsChanged):
             sig.connect(self.refresh_stats)
         state.datasetChanged.connect(self._on_dataset_changed)
         self.refresh_stats()
@@ -149,7 +152,11 @@ class GeneratePage(QWidget):
         proj = self.state.project
         self.stat_images.setText(f"{proj.total_images:,}")
         self.stat_defects.setText(str(sum(1 for d in proj.defects if d.enabled and d.count > 0)))
-        self.stat_bgs.setText(str(sum(1 for e in proj.images if e.use_as_target)))
+        try:
+            n_bgs = len(list_targets(proj, make_composer(proj)))
+        except Exception:
+            n_bgs = sum(1 for e in proj.images if e.use_as_target)
+        self.stat_bgs.setText(f"{n_bgs:,}")
         if self.worker is None:
             problems = validate(proj)
             self.start.setEnabled(not problems)
@@ -180,6 +187,7 @@ class GeneratePage(QWidget):
         self.progress.setValue(0)
         self.worker = GenerationWorker(self.state.project, out)
         self.worker.progressed.connect(self._on_progress)
+        self.worker.status.connect(self.status.setText)
         self.worker.failed.connect(self._on_failed)
         self.worker.finished_ok.connect(self._on_done)
         self.worker.finished.connect(self._cleanup)
@@ -238,6 +246,6 @@ class GeneratePage(QWidget):
         if self.state.staging is None:
             return
         rel = Path(item.data(Qt.UserRole))
-        img = self.state.staging / rel
-        mask = self.state.staging / PREVIEW_MASKS / f"{rel.stem}.png"
-        ResultViewer(img, mask, self).exec()
+        mpath = self.state.staging / PREVIEW_MASKS / f"{rel.stem}.png"
+        mask = read_mask(mpath) if mpath.exists() else None
+        ResultViewer(read_image(self.state.staging / rel), mask, rel.name, self).exec()

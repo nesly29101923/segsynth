@@ -77,9 +77,15 @@ class ImagesPage(QWidget):
         self.add_folder = QPushButton("Add folder…")
         self.all_targets = QPushButton("Use all as backgrounds")
         self.all_targets.setObjectName("Ghost")
+        self.create_bgs = QCheckBox("Create background images")
+        self.create_bgs.setToolTip(
+            "Turns on the “Background generating” step: cut these images into pieces, drop the\n"
+            "pieces that are not good, and stitch the rest into new clean backgrounds.")
         self.summary = label("", "Muted")
         for w in (self.add_files, self.add_folder, self.all_targets):
             bar.addWidget(w)
+        bar.addSpacing(8)
+        bar.addWidget(self.create_bgs)
         bar.addStretch(1)
         bar.addWidget(self.summary)
         root.addLayout(bar)
@@ -103,6 +109,8 @@ class ImagesPage(QWidget):
         self.add_files.clicked.connect(self._pick_files)
         self.add_folder.clicked.connect(self._pick_folder)
         self.all_targets.clicked.connect(self._all_targets)
+        self.create_bgs.toggled.connect(self._toggle_backgrounds)
+        state.backgroundsChanged.connect(self._sync_backgrounds)
         state.imagesChanged.connect(self.refresh)
         state.defectsChanged.connect(self.refresh)
         self._thumbs: dict[str, object] = {}
@@ -138,6 +146,18 @@ class ImagesPage(QWidget):
             e.use_as_target = True
         self.state.imagesChanged.emit()
 
+    def _toggle_backgrounds(self, on: bool) -> None:
+        bg = self.state.project.backgrounds
+        if bg.enabled != on:
+            bg.enabled = on
+            self.state.backgroundsChanged.emit()
+
+    def _sync_backgrounds(self) -> None:
+        self.create_bgs.blockSignals(True)
+        self.create_bgs.setChecked(self.state.project.backgrounds.enabled)
+        self.create_bgs.blockSignals(False)
+        self._update_summary()
+
     def _toggle(self, image_id: str, value: bool) -> None:
         self.state.project.image(image_id).use_as_target = value
         self.state.mark_dirty()
@@ -165,8 +185,10 @@ class ImagesPage(QWidget):
     def _update_summary(self) -> None:
         imgs = self.state.project.images
         n_t = sum(e.use_as_target for e in imgs)
-        self.summary.setText(f"{len(imgs)} image{'s' if len(imgs) != 1 else ''} · {n_t} background{'s' if n_t != 1 else ''}"
-                             if imgs else "")
+        text = f"{len(imgs)} image{'s' if len(imgs) != 1 else ''} · {n_t} background{'s' if n_t != 1 else ''}"
+        if self.state.project.backgrounds.enabled:
+            text += " · + generated backgrounds"
+        self.summary.setText(text if imgs else "")
 
     def refresh(self) -> None:
         self.list.clear()
