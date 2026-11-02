@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import sqlite3
 
-from segsynth.core.export import assign_splits, db_file_name, export_dataset
+import numpy as np
+
+from segsynth.core.export import assign_splits, db_file_name, export_dataset, prune_workspace
+from segsynth.core.imageio import write_image
+from segsynth.core.labeltool import LabelToolWriter
 from segsynth.core.generator import run_to_folder
 
 
@@ -47,15 +51,15 @@ def test_workspace_is_readable_like_the_ai_tool(small_project, tmp_path):
                         join SemanticSegmentationAnnotations a on a.LinkSampleId = s.SampleId
                         join ClassificationAnnotations cl on cl.LinkSampleId = s.SampleId
                         join AnomalyDetectionAnnotations an on an.LinkSampleId = s.SampleId""").fetchall()
-    assert len(rows) == 22
+    assert len(rows) == 20
     data_root = db.parent.parent / "DATA"
     for path, m1, m2, m3, _ in rows:
         assert "/" not in path and not path.startswith("\\")
         assert (data_root / path.replace("\\", "/")).is_file()
         assert m1 == m2 == m3 and m1 in (2, 3)
     splits = {(m1, lab) for _, m1, _, _, lab in rows}
-    assert {(2, -1), (2, -2), (3, -2)} <= splits
-    assert out["splits"]["VALIDATE"] >= 4 and out["splits"]["TRAIN"] + out["splits"]["VALIDATE"] == 22
+    assert {(2, -2), (3, -2)} <= splits
+    assert out["splits"]["VALIDATE"] == 4 and out["splits"]["TRAIN"] + out["splits"]["VALIDATE"] == 20
     assert not (dest / "DATA" / ".labels").exists()
 
 
@@ -63,5 +67,52 @@ def test_plain_export_has_no_workspace(small_project, tmp_path):
     staging = tmp_path / "staging"
     manifest = run_to_folder(small_project, staging, labeltool=False)
     out = export_dataset(staging, tmp_path / "plain", manifest, "x", False)
-    assert sorted(p.name for p in (tmp_path / "plain").iterdir()) == ["background", "manifest.json", "synthetic"]
+    assert sorted(p.name for p in (tmp_path / "plain").iterdir()) == ["manifest.json", "synthetic"]
     assert out["labeltool_db"] is None
+
+
+def _old_workspace(tmp_path, small_project):
+    """A workspace as saved by 1.5.0: real images copied into background/."""
+    staging = tmp_path / "staging"
+    manifest = run_to_folder(small_project, staging, labeltool=False)
+    dest = tmp_path / "ws"
+    export_dataset(staging, dest, manifest, "old", True)
+    db = dest / "META" / "old.sqlite"
+    w = LabelToolWriter.__new__(LabelToolWriter)
+    w.db = sqlite3.connect(db)
+    w.membership = 2
+    w.count = 0
+    for name in ("real_a.png", "real_b.png"):
+        write_image(dest / "DATA" / "background" / name, np.zeros((10, 10, 3), np.uint8))
+        w.add(f"background/{name}", np.zeros((10, 10), np.uint8))
+    w.close()
+    return dest, db
+
+
+def test_prune_removes_real_images_and_missing_files(small_project, tmp_path):
+    dest, db = _old_workspace(tmp_path, small_project)
+    synth = sorted((dest / "DATA" / "synthetic").glob("*.png"))
+    synth[0].unlink()
+    removed = prune_workspace(db)
+    assert sorted(removed) == sorted(["background\\real_a.png", "background\\real_b.png",
+                                      f"synthetic\\{synth[0].name}"])
+    assert not list((dest / "DATA").rglob("real_*"))
+    c = sqlite3.connect(db)
+    assert c.execute("select count(*) from Samples").fetchone() == (4,)
+    for t in ("SemanticSegmentationAnnotations", "ClassificationAnnotations", "AnomalyDetectionAnnotations"):
+        assert c.execute(f"select count(*) from {t}").fetchone() == (4,)
+    for (path,) in c.execute("select SampleFilePath from Samples"):
+        assert (dest / "DATA" / path.replace("\\", "/")).is_file()
+    assert prune_workspace(db) == []
+
+
+def test_prune_cli(small_project, tmp_path):
+    import subprocess
+    import sys
+    from pathlib import Path
+    _, db = _old_workspace(tmp_path, small_project)
+    root = Path(__file__).resolve().parents[1]
+    r = subprocess.run([sys.executable, "-m", "segsynth", "prune", str(db)], cwd=root,
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    assert "Removed 2 sample(s)" in r.stdout

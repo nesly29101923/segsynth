@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import tempfile
 import threading
 import time
@@ -246,6 +245,9 @@ def run_to_folder(
 ) -> dict:
     """Generate the dataset into out_dir.
 
+    Real source images are never copied into the dataset: they may hold defects nobody
+    labeled, which would teach the model those defects are background.
+
     Without a database: synthetic/, background/, manifest.json and a hidden .labels/ folder
     with one mask per image (used to build a database later). With labeltool (default: the
     project setting) out_dir becomes an AI tool workspace: DATA/, DATA_THUMB/, META/<db>.sqlite.
@@ -281,12 +283,7 @@ def _generate(
     files: list[dict] = []
     started = time.time()
     gen = Generator(project)
-    sources: list[dict] = []
     backgrounds: list[dict] = []
-    if s.labeltool_include_sources:
-        if status:
-            status("Copying source images…")
-        sources = _write_sources(project, s, out, files)
     if gen.composer is not None and project.backgrounds.include_in_dataset:
         backgrounds = _write_backgrounds(gen, s, out, files, status, stop)
     if status:
@@ -303,7 +300,6 @@ def _generate(
         "settings": s.to_dict(),
         "labeltool_db": None,
         "files": files,
-        "source_images": sources,
         "generated_backgrounds": backgrounds,
         "samples": records,
     }
@@ -316,29 +312,6 @@ def _store(out: Path, s, rel: str, mask: np.ndarray, kind: str, files: list[dict
     if s.save_masks:
         write_image(out / "masks" / f"{Path(rel).stem}.png", mask.astype(np.uint8) * 255)
     files.append({"file": rel, "kind": kind, "label": "bad" if mask.any() else "good"})
-
-
-def _write_sources(project: Project, s, out: Path, files: list[dict]) -> list[dict]:
-    """Copy every source image into background/; good unless defects were picked on it."""
-    written = []
-    used = set()
-    (out / BACKGROUND_DIR).mkdir(parents=True, exist_ok=True)
-    for entry in project.images:
-        src = Path(entry.path)
-        name = f"real_{src.stem}{src.suffix.lower()}"
-        n = 2
-        while name.lower() in used:
-            name = f"real_{src.stem}_{n}{src.suffix.lower()}"
-            n += 1
-        used.add(name.lower())
-        dest = out / BACKGROUND_DIR / name
-        shutil.copyfile(src, dest)
-        img = project.load_pixels(entry.id)
-        mask = project.marked_mask(entry.id, img.shape[:2])
-        rel = dest.relative_to(out).as_posix()
-        _store(out, s, rel, mask, "source", files)
-        written.append({"file": rel, "source": src.name, "label": files[-1]["label"]})
-    return written
 
 
 def _write_backgrounds(gen: Generator, s, out: Path, files: list[dict], status, stop) -> list[dict]:

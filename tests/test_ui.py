@@ -108,11 +108,11 @@ def test_full_workflow(app, window, tmp_path):
     save.save()
     dest = tmp_path / "export" / "UI test"
     assert len(list((dest / "DATA" / "synthetic").glob("synth_*.png"))) == 4
-    assert len(list((dest / "DATA" / "background").glob("real_*.png"))) == 2
+    assert not list(dest.rglob("real_*"))
     assert not (dest / ".labels").exists()
     import sqlite3
     db = sqlite3.connect(dest / "META" / "UI_test.sqlite")
-    assert db.execute("select count(*) from Samples").fetchone() == (6,)
+    assert db.execute("select count(*) from Samples").fetchone() == (4,)
     assert db.execute("select AnnotationLabelName from AnnotationLabelDefinitions where AnnotationLabelId=2").fetchone() == ("scratch",)
     db.close()
     assert (dest / "manifest.json").exists()
@@ -229,7 +229,8 @@ def test_background_generation_workflow(app, window, tmp_path):
     assert len(list((dest / "DATA" / "background").glob("bg_*.png"))) == 5
     import sqlite3
     db = sqlite3.connect(dest / "META" / "BG_test.sqlite")
-    assert db.execute("select count(*) from Samples").fetchone() == (4 + 5 + 5,)
+    assert db.execute("select count(*) from Samples").fetchone() == (5 + 5,)
+    assert not list(dest.rglob("real_*"))
     db.close()
 
     path = window.state.project.save(tmp_path / "proj")
@@ -256,7 +257,7 @@ def test_save_without_sqlite(app, window, tmp_path):
     save.path.setText(str(tmp_path / "out"))
     save.save()
     dest = tmp_path / "out" / "No DB"
-    assert sorted(p.name for p in dest.iterdir()) == ["background", "manifest.json", "synthetic"]
+    assert sorted(p.name for p in dest.iterdir()) == ["manifest.json", "synthetic"]
     assert len(list((dest / "synthetic").iterdir())) == 3
     save.sqlite.setChecked(True)
     save.save()

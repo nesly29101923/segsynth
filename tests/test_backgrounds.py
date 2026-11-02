@@ -211,7 +211,8 @@ def test_export_labels_backgrounds_good(tmp_path):
     c = sqlite3.connect(out / "META" / "bg.sqlite")
     rows = dict(c.execute("""select s.SampleFilePath, d.LinkAnnotationLabelId from Samples s
                              join AnomalyDetectionAnnotations d on d.LinkSampleId = s.SampleId""").fetchall())
-    assert len(rows) == 3 + 6 + 6
+    assert len(rows) == 6 + 6
+    assert not any("real_" in k for k in rows)
     for b in bgs:
         key = b["file"].replace("/", "\\")
         assert rows[key] == (-2 if b["label"] == "bad" else -1)

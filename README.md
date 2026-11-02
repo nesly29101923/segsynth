@@ -92,7 +92,7 @@ Without a database:
 ```
 my_dataset/
 ├── synthetic/        synth_00001.png …   generated defect images
-├── background/       real_*.png, bg_*.png
+├── background/       bg_*.png            generated backgrounds
 └── manifest.json
 ```
 
@@ -102,7 +102,7 @@ With **Generate a .sqlite file** (Save dataset page) the dataset is saved as a w
 my_dataset/
 ├── DATA/
 │   ├── synthetic/    synth_*.png
-│   └── background/   real_*.png, bg_*.png
+│   └── background/   bg_*.png
 ├── DATA_THUMB/
 ├── META/
 │   └── my_dataset.sqlite      ← select this file in the AI tool
@@ -114,7 +114,15 @@ my_dataset/
 - Images are split into TRAIN and VALIDATE (15 % by default), balanced over good and not good.
 - Masks use the tool's run-length format with CRC32; the schema matches settings version 14.
 
-A source image with no picked defects is treated as good, so pick every real defect on images you use as backgrounds. Optional `masks/` and `overlays/` folders are placed next to `DATA`.
+Your real source images are never copied into the dataset: they may contain defects nobody labeled, and a model would learn those as background. Synthetic images pasted onto a real image still contain that image, so when you use real images as backgrounds, pick every real defect on them in step 3 (or use only generated backgrounds). Optional `masks/` and `overlays/` folders are placed next to `DATA`.
+
+To repair a workspace saved with an older version (which included `real_*` images), run:
+
+```bash
+python -m segsynth prune "path\to\workspace\META\name.sqlite"
+```
+
+It removes the real images and every sample whose image file is missing, from both the database and `DATA`. Deleting image files by hand is not enough, because the database still lists them.
 
 ## Settings reference
 
