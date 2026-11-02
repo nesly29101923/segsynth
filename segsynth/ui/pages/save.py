@@ -103,6 +103,8 @@ class SavePage(QWidget):
         else:
             s = m["settings"]
             extras = [x for x, on in (("masks", s["save_masks"]), ("review overlays", s["save_overlays"])) if on]
+            if m.get("generated_backgrounds"):
+                extras.append(f"{len(m['generated_backgrounds']):,} generated backgrounds")
             if m.get("labeltool_db"):
                 src = m.get("source_images") or []
                 good = sum(1 for x in src if x["label"] == "good")

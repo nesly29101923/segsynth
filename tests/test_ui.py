@@ -13,6 +13,9 @@ QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
 from segsynth.core.imageio import write_image  # noqa: E402
 from segsynth.core.project import Project  # noqa: E402
+from segsynth.ui.main_window import (  # noqa: E402
+    STEP_BACKGROUNDS, STEP_DEFECTS, STEP_GENERATE, STEP_IMAGES, STEP_RECIPE, STEP_SAVE,
+)
 
 from .conftest import add_scratch, striped_surface  # noqa: E402
 
@@ -55,12 +58,12 @@ def test_full_workflow(app, window, tmp_path):
     write_image(tmp_path / "defect.png", img)
 
     window.state.replace_project(Project(name="UI test"))
-    window.go(0)
-    window.pages[0].add_paths([tmp_path / "clean.png", tmp_path / "defect.png"])
+    window.go(STEP_IMAGES)
+    window.images_page.add_paths([tmp_path / "clean.png", tmp_path / "defect.png"])
     assert len(window.state.project.images) == 2
 
-    window.go(1)
-    page = window.pages[1]
+    window.go(STEP_DEFECTS)
+    page = window.defects_page
     app.processEvents()
     page.images.setCurrentRow(1)
     app.processEvents()
@@ -77,9 +80,9 @@ def test_full_workflow(app, window, tmp_path):
     assert page.editing is not None
     page.cancel_edit()
 
-    window.go(2)
+    window.go(STEP_RECIPE)
     app.processEvents()
-    recipe = window.pages[2]
+    recipe = window.recipe_page
     recipe.bulk.setValue(4)
     recipe.bulk_apply.click()
     assert window.state.project.total_images == 4
@@ -91,15 +94,15 @@ def test_full_workflow(app, window, tmp_path):
     assert window.state.project.settings.save_labeltool_db
     assert window.state.project.settings.labeltool_class_name == "scratch"
 
-    window.go(3)
-    gen = window.pages[3]
+    window.go(STEP_GENERATE)
+    gen = window.generate_page
     assert gen.start.isEnabled()
     gen.run()
     _wait(app, lambda: window.state.manifest is not None and gen.worker is None)
     assert gen.gallery.count() == 4
 
-    window.go(4)
-    save = window.pages[4]
+    window.go(STEP_SAVE)
+    save = window.save_page
     save.path.setText(str(tmp_path / "export"))
     save.zip.setChecked(True)
     save.save()
@@ -149,3 +152,84 @@ def test_canvas_tools(app, window):
     assert c._zoom == pytest.approx(2.0)
     c.fit()
     assert Qt.KeepAspectRatio is not None
+
+
+def test_background_generation_workflow(app, window, tmp_path):
+    for i in range(3):
+        write_image(tmp_path / f"s{i}.png", striped_surface(seed=i))
+    img, mask = add_scratch(striped_surface(seed=9))
+    write_image(tmp_path / "defect.png", img)
+
+    window.state.replace_project(Project(name="BG test"))
+    window.go(STEP_IMAGES)
+    images = window.images_page
+    images.add_paths([tmp_path / f"s{i}.png" for i in range(3)] + [tmp_path / "defect.png"])
+    assert not window.nav_buttons[STEP_BACKGROUNDS].isEnabled()
+    assert window.next_btn.text().startswith("Pick defects")
+
+    images.create_bgs.setChecked(True)
+    assert window.state.project.backgrounds.enabled
+    assert window.nav_buttons[STEP_BACKGROUNDS].isEnabled()
+    assert window.next_btn.text().startswith("Background generating")
+
+    window.next_btn.click()
+    app.processEvents()
+    page = window.backgrounds_page
+    assert window.stack.currentWidget() is page
+    assert len(page._cards) == 4 and all(len(c.buttons) == 2 for c in page._cards)
+    assert "12 backgrounds" in page.total.text()
+    assert sum(1 for t in page.tiles if t.pixmap() is not None and not t.pixmap().isNull()) == 8
+
+    page._cards[3].buttons[0].click()
+    assert window.state.project.backgrounds.is_rejected(window.state.project.images[3].id, 0)
+    assert "7 of 8 pieces good" in page.counts.text()
+    assert "9 backgrounds" in page.total.text()
+
+    page.pieces.setValue(3)
+    assert window.state.project.backgrounds.rejected == []
+    assert all(len(c.buttons) == 3 for c in page._cards)
+    page.pieces.setValue(2)
+
+    page.max_count.setValue(5)
+    assert "5 backgrounds" in page.total.text()
+
+    window.next_btn.click()
+    assert window.stack.currentWidget() is window.defects_page
+    window.back_btn.click()
+    assert window.stack.currentWidget() is page
+
+    defects = window.defects_page
+    window.go(STEP_DEFECTS)
+    app.processEvents()
+    defects.images.setCurrentRow(3)
+    app.processEvents()
+    defects.canvas.set_edit_mask(cv2.dilate(mask, np.ones((7, 7), np.uint8)))
+    defects.commit()
+    for e in window.state.project.images:
+        e.use_as_target = False
+    window.go(STEP_RECIPE)
+    window.recipe_page.bulk.setValue(5)
+    window.recipe_page.bulk_apply.click()
+    window.recipe_page.labeltool.setChecked(True)
+
+    window.go(STEP_GENERATE)
+    gen = window.generate_page
+    assert gen.stat_bgs.text() == "5"
+    gen.run()
+    _wait(app, lambda: window.state.manifest is not None and gen.worker is None)
+    m = window.state.manifest
+    assert m["count"] == 5 and len(m["generated_backgrounds"]) == 5
+    assert all(s["target_image"].startswith("bg_") for s in m["samples"])
+
+    window.go(STEP_SAVE)
+    window.save_page.path.setText(str(tmp_path / "export"))
+    window.save_page.save()
+    dest = tmp_path / "export" / "BG test"
+    assert len(list((dest / "Images").glob("bg_*.png"))) == 5
+    import sqlite3
+    db = sqlite3.connect(dest / "BG test.sqlite")
+    assert db.execute("select count(*) from Samples").fetchone() == (4 + 5 + 5,)
+    db.close()
+
+    path = window.state.project.save(tmp_path / "proj")
+    assert Project.load(path).backgrounds == window.state.project.backgrounds

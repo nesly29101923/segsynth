@@ -14,6 +14,7 @@ import numpy as np
 
 from . import transform as tf
 from .background import BackgroundMode
+from .backgrounds import BackgroundComposer
 from .blend import BlendMode, blend
 from .imageio import max_value, write_image
 from .labeltool import LabelToolWriter
@@ -36,12 +37,41 @@ class GenerationError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class Target:
+    key: str
+    name: str
+    image_id: str | None = None
+    combo: tuple | None = None
+
+    @property
+    def generated(self) -> bool:
+        return self.combo is not None
+
+
+def make_composer(project: Project) -> BackgroundComposer | None:
+    return BackgroundComposer(project) if project.backgrounds.enabled and project.images else None
+
+
+def list_targets(project: Project, composer: BackgroundComposer | None = None) -> list[Target]:
+    targets = [Target(e.id, e.name, image_id=e.id) for e in project.images if e.use_as_target]
+    if composer is not None:
+        targets += [Target(f"bg:{i}", f"{composer.name(i)}.png", combo=c) for i, c in enumerate(composer.combos())]
+    return targets
+
+
 def validate(project: Project) -> list[str]:
     problems = []
     if not project.images:
         problems.append("Add at least one image.")
-    if not [e for e in project.images if e.use_as_target]:
-        problems.append("Select at least one image as a target background.")
+    composer = make_composer(project)
+    targets = list_targets(project, composer)
+    if not targets:
+        if project.backgrounds.enabled:
+            problems.append("Select a background image, or keep at least one good piece in every slot "
+                            "so backgrounds can be created.")
+        else:
+            problems.append("Select at least one image as a target background.")
     active = [d for d in project.defects if d.enabled and d.count > 0 and d.mask is not None and d.mask.any()]
     if not active:
         problems.append("Pick at least one defect and give it a count above zero.")
@@ -50,6 +80,9 @@ def validate(project: Project) -> list[str]:
         if e.use_as_target:
             img = project.load_pixels(e.id)
             shapes.add(img.ndim == 3 and img.shape[2])
+    if composer is not None and composer.combos():
+        shp = composer.shape
+        shapes.add(len(shp) == 3 and shp[2])
     if len(shapes) > 1:
         problems.append("Target images mix grayscale and color; use one kind.")
     return problems
@@ -61,6 +94,8 @@ class Generator:
         self.s = project.settings
         self._patches: dict[str, DefectPatch] = {}
         self._marked: dict[str, np.ndarray] = {}
+        self.composer = make_composer(project)
+        self.targets = list_targets(project, self.composer)
 
     def patch(self, d: DefectEntry) -> DefectPatch:
         if d.id not in self._patches:
@@ -68,13 +103,26 @@ class Generator:
             self._patches[d.id] = extract_patch(img, d.mask, self.s.bg_mode, self.s.bg_size, self.s.feather)
         return self._patches[d.id]
 
-    def _marked_mask(self, image_id: str, shape) -> np.ndarray:
-        if image_id not in self._marked:
-            m = self.project.marked_mask(image_id, shape)
-            if m.any():
-                m = cv2.dilate(m, np.ones((9, 9), np.uint8))
-            self._marked[image_id] = m
-        return self._marked[image_id]
+    def pixels(self, t: Target) -> np.ndarray:
+        if t.generated:
+            return self.composer.render(t.combo)[0]
+        return self.project.load_pixels(t.image_id)
+
+    def labels(self, t: Target, shape) -> np.ndarray:
+        """Defects already present on the target (picked by the user)."""
+        if t.generated:
+            return self.composer.render(t.combo)[1].copy()
+        return self.project.marked_mask(t.image_id, shape)
+
+    def _marked_mask(self, t: Target, shape) -> np.ndarray:
+        if t.key in self._marked:
+            return self._marked[t.key]
+        m = self.labels(t, shape)
+        if m.any():
+            m = cv2.dilate(m, np.ones((9, 9), np.uint8))
+        if not t.generated or not m.any():
+            self._marked[t.key] = m
+        return m
 
     def plan(self, rng: np.random.Generator) -> list[str]:
         jobs = [d.id for d in self.project.defects if d.enabled and d.count > 0 for _ in range(d.count)]
@@ -127,7 +175,7 @@ class Generator:
         if problems:
             raise GenerationError(" ".join(problems))
         rng = np.random.default_rng(self.s.seed)
-        targets = [e for e in self.project.images if e.use_as_target]
+        targets = self.targets
         active = [d for d in self.project.defects if d.enabled and d.mask is not None and d.mask.any()]
         lo, hi = sorted(int(v) for v in self.s.defects_per_image)
         lo = max(1, lo)
@@ -147,9 +195,9 @@ class Generator:
             sample = None
             for _ in range(max(4, len(targets))):
                 tgt = next_target()
-                img = self.project.load_pixels(tgt.id)
+                img = self.pixels(tgt)
                 shape = img.shape[:2]
-                occupied = self._marked_mask(tgt.id, shape).copy() if self.s.avoid_marked_defects \
+                occupied = self._marked_mask(tgt, shape).copy() if self.s.avoid_marked_defects \
                     else np.zeros(shape, np.uint8)
                 label = np.zeros(shape, np.uint8)
                 canvas = img
@@ -163,13 +211,16 @@ class Generator:
                     if info is not None:
                         placed.append(info)
                 pasted = label.copy()
-                label |= self.project.marked_mask(tgt.id, shape)
+                label |= self.labels(tgt, shape)
+                meta = {"target_image": tgt.name, "defects": placed}
+                if tgt.generated:
+                    meta["target_pieces"] = self.composer.describe(tgt.combo)
                 sample = GeneratedSample(
                     index=index,
                     image=canvas,
                     mask=label,
                     pasted=pasted,
-                    meta={"target_image": tgt.name, "defects": placed},
+                    meta=meta,
                 )
                 break
             if sample is None:
@@ -185,6 +236,7 @@ def run_to_folder(
     out_dir: str | Path,
     progress: Callable[[int, int, GeneratedSample], None] | None = None,
     stop: threading.Event | None = None,
+    status: Callable[[str], None] | None = None,
 ) -> dict:
     s = project.settings
     out = Path(out_dir)
@@ -203,9 +255,16 @@ def run_to_folder(
     if s.save_labeltool_db:
         db = LabelToolWriter(out / labeltool_db_name(project), s.labeltool_class_name, s.labeltool_class_color)
     sources = []
+    backgrounds = []
     try:
         if db is not None and s.labeltool_include_sources:
+            if status:
+                status("Copying source images…")
             sources = _write_sources(project, out, image_dir, db)
+        if gen.composer is not None and project.backgrounds.include_in_dataset:
+            backgrounds = _write_backgrounds(gen, s, out, image_dir, db, status, stop)
+        if status:
+            status("Preparing defects…")
         _write_samples(gen, s, out, image_dir, db, records, total, progress, stop)
     finally:
         if db is not None:
@@ -221,6 +280,7 @@ def run_to_folder(
         "settings": s.to_dict(),
         "labeltool_db": labeltool_db_name(project) if s.save_labeltool_db else None,
         "source_images": sources,
+        "generated_backgrounds": backgrounds,
         "samples": records,
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -251,6 +311,28 @@ def _write_sources(project: Project, out: Path, image_dir: str, db) -> list[dict
         rel = dest.relative_to(out).as_posix()
         db.add(rel, mask)
         written.append({"file": rel, "source": src.name, "label": "bad" if mask.any() else "good"})
+    return written
+
+
+def _write_backgrounds(gen: Generator, s, out: Path, image_dir: str, db, status, stop) -> list[dict]:
+    """Write every generated background; labeled good unless it carries picked defects."""
+    written = []
+    generated = [t for t in gen.targets if t.generated]
+    for i, t in enumerate(generated):
+        if stop is not None and stop.is_set():
+            break
+        if status and i % 5 == 0:
+            status(f"Writing generated backgrounds… {i}/{len(generated)}")
+        img, mask = gen.composer.render(t.combo)
+        path = out / image_dir / f"{Path(t.name).stem}{s.output_ext}"
+        write_image(path, img)
+        rel = path.relative_to(out).as_posix()
+        if s.save_masks:
+            write_image(out / "masks" / f"{Path(t.name).stem}.png", mask * 255)
+        if db is not None:
+            db.add(rel, mask)
+        written.append({"file": rel, "pieces": gen.composer.describe(t.combo),
+                        "label": "bad" if mask.any() else "good"})
     return written
 
 

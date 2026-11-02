@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .backgrounds import BackgroundSettings
 from .imageio import read_image, read_mask, write_image
 from .transform import TransformParams
 
@@ -89,6 +90,7 @@ class Project:
     images: list[ImageEntry] = field(default_factory=list)
     defects: list[DefectEntry] = field(default_factory=list)
     settings: GenerationSettings = field(default_factory=GenerationSettings)
+    backgrounds: BackgroundSettings = field(default_factory=BackgroundSettings)
     folder: Path | None = None
     _cache: dict = field(default_factory=dict, repr=False, compare=False)
 
@@ -105,6 +107,7 @@ class Project:
     def remove_image(self, image_id: str) -> None:
         self.images = [e for e in self.images if e.id != image_id]
         self.defects = [d for d in self.defects if d.image_id != image_id]
+        self.backgrounds.rejected = [r for r in self.backgrounds.rejected if r[0] != image_id]
         self._cache.pop(image_id, None)
 
     def image(self, image_id: str) -> ImageEntry:
@@ -171,6 +174,7 @@ class Project:
             "images": [asdict(e) for e in self.images],
             "defects": [d.to_dict() for d in self.defects],
             "settings": self.settings.to_dict(),
+            "backgrounds": self.backgrounds.to_dict(),
         }
         path = folder / PROJECT_FILE
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -188,6 +192,7 @@ class Project:
             name=data.get("name", "Untitled dataset"),
             images=[ImageEntry(**e) for e in data.get("images", [])],
             settings=GenerationSettings.from_dict(data.get("settings", {})),
+            backgrounds=BackgroundSettings.from_dict(data.get("backgrounds", {})),
             folder=folder,
         )
         for d in data.get("defects", []):

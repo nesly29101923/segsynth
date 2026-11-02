@@ -23,10 +23,11 @@ When only a handful of defect images exist, a segmentation model sees each defec
 | Step | |
 |---|---|
 | **1 · Source images** | Add your real images. Tick which ones may receive synthetic defects (clean *and* defective images both work as backgrounds). |
-| **2 · Pick defects** | Brush, box or lasso each defect you want to reproduce. **Snap to defect** shrinks a rough selection to the pixels that stand out from the surface. Only the defects you pick are used — harmless marks can be left alone. |
-| **3 · Recipe** | Set how many images to create per defect and how much each copy may vary. **Shuffle preview** shows live variations with the current settings. |
-| **4 · Generate** | Runs in the background with progress and a live gallery. Double-click a result to inspect it at full resolution. |
-| **5 · Save dataset** | Copy the result to its destination folder (optionally zipped). |
+| **2 · Background generating** *(optional)* | Tick **Create background images** in step 1. Each image is cut into pieces; click every piece that is not good. Good pieces from different images are aligned and stitched into new clean backgrounds. |
+| **3 · Pick defects** | Brush, box or lasso each defect you want to reproduce. **Snap to defect** shrinks a rough selection to the pixels that stand out from the surface. Only the defects you pick are used — harmless marks can be left alone. |
+| **4 · Recipe** | Set how many images to create per defect and how much each copy may vary. **Shuffle preview** shows live variations with the current settings. |
+| **5 · Generate** | Runs in the background with progress and a live gallery. Double-click a result to inspect it at full resolution. |
+| **6 · Save dataset** | Copy the result to its destination folder (optionally zipped). |
 
 Projects (images, picked defects, recipe, settings) are saved as a folder with `project.json` and can be reopened or run headless later.
 
@@ -34,6 +35,17 @@ Projects (images, picked defects, recipe, settings) are saved as a folder with `
   <img src="docs/images/recipe.png" width="49%" alt="Recipe">
   <img src="docs/images/generate.png" width="49%" alt="Generate">
 </p>
+
+## Background generation
+
+![Background generating](docs/images/backgrounds.png)
+
+Few clean images means few backgrounds. With **Create background images**, every source image is cut into pieces (for example top and bottom halves), you reject the pieces with defects, and SegSynth stitches the remaining pieces from *different* images together:
+
+- **Pieces stay in place.** A top piece is only used on top, because lighting and part geometry depend on position. With 2 pieces the number of backgrounds is *good tops × good bottoms*, minus the combinations that would just rebuild an original image.
+- **No visible seams.** Each image is shifted to line up with the first one, then neighbouring pieces are cross-faded over the *Seam blend* band. Cut across the texture (horizontal cuts for grooves running top to bottom) for the most natural result.
+- **Labels stay correct.** Generated backgrounds are added to the dataset as good images. If you picked a defect on a source image and keep its piece, the defect follows the piece and the background is labeled bad.
+- **Max backgrounds** caps the count; above it a random, reproducible selection is used.
 
 ## Install
 

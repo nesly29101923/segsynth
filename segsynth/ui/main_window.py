@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..core.project import PROJECT_FILE, Project
+from .pages.backgrounds import BackgroundsPage
 from .pages.defects import DefectsPage
 from .pages.generate import GeneratePage
 from .pages.images import ImagesPage
@@ -23,7 +24,8 @@ from .state import AppState
 
 APP_NAME = "SegSynth"
 TAGLINE = "Synthetic data generator for semantic segmentation"
-STEPS = ["Source images", "Pick defects", "Recipe", "Generate", "Save dataset"]
+STEPS = ["Source images", "Background generating", "Pick defects", "Recipe", "Generate", "Save dataset"]
+STEP_IMAGES, STEP_BACKGROUNDS, STEP_DEFECTS, STEP_RECIPE, STEP_GENERATE, STEP_SAVE = range(len(STEPS))
 MAX_RECENT = 8
 
 SHORTCUTS_HTML = """
@@ -184,9 +186,15 @@ class MainWindow(QMainWindow):
         right.setSpacing(0)
         self.stack = QStackedWidget()
         self.start_page = StartPage(self)
+        self.images_page = ImagesPage(self.state)
+        self.backgrounds_page = BackgroundsPage(self.state)
+        self.defects_page = DefectsPage(self.state)
+        self.recipe_page = RecipePage(self.state)
+        self.generate_page = GeneratePage(self.state)
+        self.save_page = SavePage(self.state)
         self.pages = [
-            ImagesPage(self.state), DefectsPage(self.state), RecipePage(self.state),
-            GeneratePage(self.state), SavePage(self.state),
+            self.images_page, self.backgrounds_page, self.defects_page,
+            self.recipe_page, self.generate_page, self.save_page,
         ]
         self.stack.addWidget(self.start_page)
         for p in self.pages:
@@ -215,14 +223,14 @@ class MainWindow(QMainWindow):
         self.btn_open.clicked.connect(lambda: self.open_project())
         self.btn_save.clicked.connect(self.save_project)
         self.btn_help.clicked.connect(self.show_shortcuts)
-        self.back_btn.clicked.connect(lambda: self.go(self.current_step() - 1))
-        self.next_btn.clicked.connect(lambda: self.go(self.current_step() + 1))
+        self.back_btn.clicked.connect(lambda: self.go(self._neighbor(self.current_step(), -1)))
+        self.next_btn.clicked.connect(lambda: self.go(self._neighbor(self.current_step(), +1)))
         self.name_edit.editingFinished.connect(self._rename)
         self.state.dirtyChanged.connect(self._update_title)
         for sig in (self.state.imagesChanged, self.state.defectsChanged, self.state.settingsChanged,
-                    self.state.datasetChanged, self.state.projectReplaced):
+                    self.state.datasetChanged, self.state.projectReplaced, self.state.backgroundsChanged):
             sig.connect(self._update_nav)
-        self.pages[3].generationFinished.connect(self._update_nav)
+        self.generate_page.generationFinished.connect(self._update_nav)
 
         for key, fn in (("Ctrl+S", self.save_project), ("Ctrl+O", self.open_project), ("Ctrl+N", self.new_project)):
             act = QAction(self)
@@ -248,13 +256,21 @@ class MainWindow(QMainWindow):
 
     def _step_ready(self, step: int) -> tuple[bool, str]:
         proj = self.state.project
-        if step >= 1 and not proj.images:
+        if step >= STEP_BACKGROUNDS and not proj.images:
             return False, "Add at least one image first."
-        if step >= 2 and not proj.defects:
+        if step == STEP_BACKGROUNDS and not proj.backgrounds.enabled:
+            return False, "Tick “Create background images” in step 1 to use this step."
+        if step >= STEP_RECIPE and not proj.defects:
             return False, "Pick at least one defect first."
-        if step >= 4 and self.state.manifest is None:
+        if step >= STEP_SAVE and self.state.manifest is None:
             return False, "Generate the dataset first."
         return True, ""
+
+    def _neighbor(self, step: int, direction: int) -> int:
+        nxt = step + direction
+        if nxt == STEP_BACKGROUNDS and not self.state.project.backgrounds.enabled:
+            nxt += direction
+        return max(0, min(len(self.pages) - 1, nxt))
 
     def go(self, step: int) -> None:
         step = max(0, min(len(self.pages) - 1, step))
@@ -282,14 +298,16 @@ class MainWindow(QMainWindow):
         last = step == len(self.pages) - 1
         self.next_btn.setVisible(not last)
         if not last:
-            ok, why = self._step_ready(step + 1)
+            nxt = self._neighbor(step, +1)
+            ok, why = self._step_ready(nxt)
             self.next_btn.setEnabled(ok)
-            self.next_btn.setText(f"{STEPS[step + 1]} →")
+            self.next_btn.setText(f"{STEPS[nxt]} →")
             self.footer_hint.setText("" if ok else why)
         else:
             self.footer_hint.setText("")
         hints = [
             "Add your real images and mark which ones can receive defects.",
+            "Cut images into pieces, drop the bad ones and stitch new clean backgrounds.",
             "Brush, box or lasso each defect you want to reproduce.",
             "Choose how many images per defect and how much they may vary.",
             "Run the generation and review the results.",
@@ -299,7 +317,7 @@ class MainWindow(QMainWindow):
 
     # project handling ----------------------------------------------------
     def _confirm_discard(self) -> bool:
-        if self.pages[3].is_running():
+        if self.generate_page.is_running():
             QMessageBox.information(self, "Generation running", "Cancel the running generation first.")
             return False
         if not self.state.dirty:
@@ -348,7 +366,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Missing images",
                                 "These images were not found and were removed with their defects:\n" + "\n".join(missing))
             self.state.mark_dirty(True)
-        self.go(2 if proj.defects else 0)
+        self.go(STEP_RECIPE if proj.defects else STEP_IMAGES)
 
     def save_project(self) -> bool:
         if self.stack.currentWidget() is self.start_page:
@@ -413,13 +431,13 @@ class MainWindow(QMainWindow):
         box.exec()
 
     def closeEvent(self, e) -> None:
-        if self.pages[3].is_running():
+        if self.generate_page.is_running():
             r = QMessageBox.question(self, "Generation running", "Stop the generation and quit?")
             if r != QMessageBox.Yes:
                 e.ignore()
                 return
-            self.pages[3].stop()
-            self.pages[3].worker.wait(5000)
+            self.generate_page.stop()
+            self.generate_page.worker.wait(5000)
         elif self.stack.currentWidget() is not self.start_page and not self._confirm_discard():
             e.ignore()
             return
