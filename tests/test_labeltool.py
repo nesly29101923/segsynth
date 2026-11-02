@@ -75,11 +75,11 @@ def test_generator_writes_database(small_project, tmp_path):
     out = tmp_path / "out"
     manifest = run_to_folder(small_project, out)
     assert manifest["labeltool_db"] == "Synthetic set.sqlite"
-    assert len(list((out / "Images").glob("synth_*.png"))) == 5
+    assert len(list((out / "synthetic").glob("synth_*.png"))) == 5
     c = sqlite3.connect(out / "Synthetic set.sqlite")
     rows = c.execute("""select s.SampleFilePath, a.SemanticSegmentationRunLengthCode from Samples s
                         join SemanticSegmentationAnnotations a on a.LinkSampleId = s.SampleId
-                        where s.SampleFilePath like 'Images\\synth_%'""").fetchall()
+                        where s.SampleFilePath like 'synthetic\\synth_%'""").fetchall()
     assert len(rows) == 5
     for path, blob in rows:
         rel = path.replace("\\", "/")
@@ -93,7 +93,7 @@ def test_generator_writes_database(small_project, tmp_path):
 
 def test_default_keeps_previous_layout(small_project, tmp_path):
     run_to_folder(small_project, tmp_path / "o")
-    assert (tmp_path / "o" / "images").is_dir()
+    assert (tmp_path / "o" / "synthetic").is_dir()
     assert not list((tmp_path / "o").glob("*.sqlite"))
 
 
@@ -115,15 +115,15 @@ def test_sources_good_and_bad(small_project, tmp_path):
                         join AnomalyDetectionAnnotations d on d.LinkSampleId = s.SampleId""").fetchall()
     assert len(rows) == 5 + 2
     by_path = {p: (decode_rle(b), lab) for p, b, lab in rows}
-    clean, clean_lab = by_path["Images\\real_clean.png"]
+    clean, clean_lab = by_path["background\\real_clean.png"]
     assert not clean.any() and clean_lab == -1
-    bad, bad_lab = by_path["Images\\real_defect.png"]
+    bad, bad_lab = by_path["background\\real_defect.png"]
     assert bad.any() and bad_lab == -2
     defect = small_project.defects[0]
     assert np.array_equal(bad > 0, defect.mask > 0)
     synth = [v for p, v in by_path.items() if "synth_" in p]
     assert all(m.any() and lab == -2 for m, lab in synth)
-    assert read_image(out / "Images" / "real_clean.png").shape == read_image(small_project.images[0].path).shape
+    assert read_image(out / "background" / "real_clean.png").shape == read_image(small_project.images[0].path).shape
 
 
 def test_sources_can_be_excluded(small_project, tmp_path):
@@ -133,7 +133,7 @@ def test_sources_can_be_excluded(small_project, tmp_path):
     run_to_folder(small_project, out)
     c = sqlite3.connect(out / f"{small_project.name}.sqlite")
     assert c.execute("select count(*) from Samples").fetchone() == (5,)
-    assert not list((out / "Images").glob("real_*"))
+    assert not list((out / "background").glob("real_*"))
 
 
 def test_backgrounds_used_evenly(small_project, tmp_path):
@@ -141,3 +141,35 @@ def test_backgrounds_used_evenly(small_project, tmp_path):
     small_project.defects[0].count = 10
     seen = [s.meta["target_image"] for s in Generator(small_project).generate()]
     assert seen.count("clean.png") == seen.count("defect.png") == 5
+
+
+def test_database_written_later_from_stored_labels(small_project, tmp_path):
+    from segsynth.core.generator import label_path, write_labeltool_db
+    small_project.settings.save_labeltool_db = True
+    out = tmp_path / "staging"
+    manifest = run_to_folder(small_project, out, labeltool=False)
+    assert manifest["labeltool_db"] is None and not list(out.glob("*.sqlite"))
+    kinds = [f["kind"] for f in manifest["files"]]
+    assert kinds.count("source") == 2 and kinds.count("synthetic") == 5
+    for f in manifest["files"]:
+        assert label_path(out, f["file"]).exists()
+        assert f["file"].split("/")[0] == ("synthetic" if f["kind"] == "synthetic" else "background")
+    n = write_labeltool_db(out, manifest["files"], tmp_path / "later.sqlite", "scratch", "#00ff00")
+    assert n == 7
+    c = sqlite3.connect(tmp_path / "later.sqlite")
+    rows = c.execute("""select s.SampleFilePath, a.SemanticSegmentationRunLengthCode, d.LinkAnnotationLabelId
+                        from Samples s
+                        join SemanticSegmentationAnnotations a on a.LinkSampleId = s.SampleId
+                        join AnomalyDetectionAnnotations d on d.LinkSampleId = s.SampleId""").fetchall()
+    by_file = {f["file"].replace("/", "\\"): f for f in manifest["files"]}
+    for path, blob, anomaly in rows:
+        f = by_file[path]
+        labels = decode_rle(blob)
+        stored = read_mask(label_path(out, f["file"]))
+        assert np.array_equal(labels > 0, stored > 0)
+        assert set(np.unique(labels)) <= {0, DEFECT_ID}
+        if f["label"] == "good":
+            assert not labels.any() and anomaly == -1
+        else:
+            assert labels.any() and anomaly == -2
+    assert all(f["label"] == "bad" for f in manifest["files"] if f["kind"] == "synthetic")

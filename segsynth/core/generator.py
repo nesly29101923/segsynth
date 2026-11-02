@@ -16,7 +16,7 @@ from . import transform as tf
 from .background import BackgroundMode
 from .backgrounds import BackgroundComposer
 from .blend import BlendMode, blend
-from .imageio import max_value, write_image
+from .imageio import max_value, read_mask, write_image
 from .labeltool import LabelToolWriter
 from .patch import DefectPatch, extract_patch
 from .placement import find_position
@@ -231,44 +231,54 @@ class Generator:
             yield sample
 
 
+SYNTHETIC_DIR = "synthetic"
+BACKGROUND_DIR = "background"
+LABELS_DIR = ".labels"
+
+
+def label_path(root: Path, rel: str) -> Path:
+    """Where the label mask of an output image is stored inside a generation folder."""
+    return Path(root) / LABELS_DIR / f"{rel}.png"
+
+
 def run_to_folder(
     project: Project,
     out_dir: str | Path,
     progress: Callable[[int, int, GeneratedSample], None] | None = None,
     stop: threading.Event | None = None,
     status: Callable[[str], None] | None = None,
+    labeltool: bool | None = None,
 ) -> dict:
+    """Generate the dataset into out_dir.
+
+    Layout: synthetic/ (generated defect images), background/ (source and generated
+    backgrounds), manifest.json, and a hidden .labels/ folder with one mask per image.
+    With labeltool (default: the project setting) a label tool .sqlite is written as well.
+    """
     s = project.settings
     out = Path(out_dir)
-    image_dir = "Images" if s.save_labeltool_db else "images"
-    (out / image_dir).mkdir(parents=True, exist_ok=True)
+    (out / SYNTHETIC_DIR).mkdir(parents=True, exist_ok=True)
     if s.save_masks:
         (out / "masks").mkdir(parents=True, exist_ok=True)
     if s.save_overlays:
         (out / "overlays").mkdir(parents=True, exist_ok=True)
 
     total = project.total_images
-    records = []
+    records: list[dict] = []
+    files: list[dict] = []
     started = time.time()
     gen = Generator(project)
-    db = None
-    if s.save_labeltool_db:
-        db = LabelToolWriter(out / labeltool_db_name(project), s.labeltool_class_name, s.labeltool_class_color)
-    sources = []
-    backgrounds = []
-    try:
-        if db is not None and s.labeltool_include_sources:
-            if status:
-                status("Copying source images…")
-            sources = _write_sources(project, out, image_dir, db)
-        if gen.composer is not None and project.backgrounds.include_in_dataset:
-            backgrounds = _write_backgrounds(gen, s, out, image_dir, db, status, stop)
+    sources: list[dict] = []
+    backgrounds: list[dict] = []
+    if s.labeltool_include_sources:
         if status:
-            status("Preparing defects…")
-        _write_samples(gen, s, out, image_dir, db, records, total, progress, stop)
-    finally:
-        if db is not None:
-            db.close()
+            status("Copying source images…")
+        sources = _write_sources(project, s, out, files)
+    if gen.composer is not None and project.backgrounds.include_in_dataset:
+        backgrounds = _write_backgrounds(gen, s, out, files, status, stop)
+    if status:
+        status("Preparing defects…")
+    _write_samples(gen, s, out, files, records, total, progress, stop)
 
     manifest = {
         "generator": "segsynth",
@@ -278,13 +288,30 @@ def run_to_folder(
         "count": len(records),
         "completed": len(records) == total,
         "settings": s.to_dict(),
-        "labeltool_db": labeltool_db_name(project) if s.save_labeltool_db else None,
+        "labeltool_db": None,
+        "files": files,
         "source_images": sources,
         "generated_backgrounds": backgrounds,
         "samples": records,
     }
+    if s.save_labeltool_db if labeltool is None else labeltool:
+        if status:
+            status("Writing label tool database…")
+        name = labeltool_db_name(project)
+        write_labeltool_db(out, files, out / name, s.labeltool_class_name, s.labeltool_class_color)
+        manifest["labeltool_db"] = name
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest
+
+
+def write_labeltool_db(root: str | Path, files: list[dict], db_path: str | Path,
+                       class_name: str = "defect", class_color: str = "#ff5c6c") -> int:
+    """Create a label tool database for every file listed in the manifest, using stored masks."""
+    root = Path(root)
+    with LabelToolWriter(db_path, class_name, class_color) as db:
+        for f in files:
+            db.add(f["file"], read_mask(label_path(root, f["file"])))
+        return db.count
 
 
 def labeltool_db_name(project: Project) -> str:
@@ -292,10 +319,18 @@ def labeltool_db_name(project: Project) -> str:
     return f"{stem}.sqlite"
 
 
-def _write_sources(project: Project, out: Path, image_dir: str, db) -> list[dict]:
-    """Copy every project image into the dataset; label it good, or bad with its picked defects."""
+def _store(out: Path, s, rel: str, mask: np.ndarray, kind: str, files: list[dict]) -> None:
+    write_image(label_path(out, rel), mask.astype(np.uint8) * 255)
+    if s.save_masks:
+        write_image(out / "masks" / f"{Path(rel).stem}.png", mask.astype(np.uint8) * 255)
+    files.append({"file": rel, "kind": kind, "label": "bad" if mask.any() else "good"})
+
+
+def _write_sources(project: Project, s, out: Path, files: list[dict]) -> list[dict]:
+    """Copy every source image into background/; good unless defects were picked on it."""
     written = []
     used = set()
+    (out / BACKGROUND_DIR).mkdir(parents=True, exist_ok=True)
     for entry in project.images:
         src = Path(entry.path)
         name = f"real_{src.stem}{src.suffix.lower()}"
@@ -304,19 +339,20 @@ def _write_sources(project: Project, out: Path, image_dir: str, db) -> list[dict
             name = f"real_{src.stem}_{n}{src.suffix.lower()}"
             n += 1
         used.add(name.lower())
-        dest = out / image_dir / name
+        dest = out / BACKGROUND_DIR / name
         shutil.copyfile(src, dest)
         img = project.load_pixels(entry.id)
         mask = project.marked_mask(entry.id, img.shape[:2])
         rel = dest.relative_to(out).as_posix()
-        db.add(rel, mask)
-        written.append({"file": rel, "source": src.name, "label": "bad" if mask.any() else "good"})
+        _store(out, s, rel, mask, "source", files)
+        written.append({"file": rel, "source": src.name, "label": files[-1]["label"]})
     return written
 
 
-def _write_backgrounds(gen: Generator, s, out: Path, image_dir: str, db, status, stop) -> list[dict]:
-    """Write every generated background; labeled good unless it carries picked defects."""
+def _write_backgrounds(gen: Generator, s, out: Path, files: list[dict], status, stop) -> list[dict]:
+    """Write every generated background into background/."""
     written = []
+    (out / BACKGROUND_DIR).mkdir(parents=True, exist_ok=True)
     generated = [t for t in gen.targets if t.generated]
     for i, t in enumerate(generated):
         if stop is not None and stop.is_set():
@@ -324,35 +360,29 @@ def _write_backgrounds(gen: Generator, s, out: Path, image_dir: str, db, status,
         if status and i % 5 == 0:
             status(f"Writing generated backgrounds… {i}/{len(generated)}")
         img, mask = gen.composer.render(t.combo)
-        path = out / image_dir / f"{Path(t.name).stem}{s.output_ext}"
+        path = out / BACKGROUND_DIR / f"{Path(t.name).stem}{s.output_ext}"
         write_image(path, img)
         rel = path.relative_to(out).as_posix()
-        if s.save_masks:
-            write_image(out / "masks" / f"{Path(t.name).stem}.png", mask * 255)
-        if db is not None:
-            db.add(rel, mask)
-        written.append({"file": rel, "pieces": gen.composer.describe(t.combo),
-                        "label": "bad" if mask.any() else "good"})
+        _store(out, s, rel, mask, "background", files)
+        written.append({"file": rel, "pieces": gen.composer.describe(t.combo), "label": files[-1]["label"]})
     return written
 
 
-def _write_samples(gen, s, out: Path, image_dir: str, db, records: list, total: int, progress, stop) -> None:
+def _write_samples(gen, s, out: Path, files: list[dict], records: list, total: int, progress, stop) -> None:
     for sample in gen.generate(stop):
         stem = f"{s.name_prefix}_{sample.index + 1:05d}"
-        img_path = out / image_dir / f"{stem}{s.output_ext}"
+        img_path = out / SYNTHETIC_DIR / f"{stem}{s.output_ext}"
         write_image(img_path, sample.image)
-        sample.files["image"] = img_path.relative_to(out).as_posix()
+        rel = img_path.relative_to(out).as_posix()
+        sample.files["image"] = rel
+        _store(out, s, rel, sample.mask, "synthetic", files)
         if s.save_masks:
-            mpath = out / "masks" / f"{stem}.png"
-            write_image(mpath, sample.mask * 255)
-            sample.files["mask"] = mpath.relative_to(out).as_posix()
+            sample.files["mask"] = f"masks/{stem}.png"
         if s.save_overlays:
             opath = out / "overlays" / f"{stem}.jpg"
             write_image(opath, overlay(sample.image, sample.mask))
             sample.files["overlay"] = opath.relative_to(out).as_posix()
-        if db is not None:
-            db.add(sample.files["image"], sample.mask)
-        records.append({"file": sample.files["image"], **sample.meta})
+        records.append({"file": rel, **sample.meta})
         if progress:
             progress(len(records), total, sample)
 
