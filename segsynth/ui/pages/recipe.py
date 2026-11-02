@@ -531,16 +531,16 @@ class RecipePage(QWidget):
     def preview(self) -> None:
         did = self._selected_id()
         proj = self.state.project
-        targets = [e for e in proj.images if e.use_as_target]
         if did is None:
             self._clear_preview("Select a defect in the table to preview it.")
             return
+        gen = Generator(proj)
+        targets = gen.targets
         if not targets:
-            self._clear_preview("Mark at least one image as a background in step 1.")
+            self._clear_preview("Mark at least one image as a background in step 1, or create backgrounds.")
             return
         d = proj.defect(did)
         s = proj.settings
-        gen = Generator(proj)
         rng = np.random.default_rng()
         try:
             base = gen.patch(d)
@@ -551,7 +551,7 @@ class RecipePage(QWidget):
         shown = 0
         for tile in self.preview_tiles:
             tgt = targets[int(rng.integers(len(targets)))]
-            img = proj.load_pixels(tgt.id)
+            img = gen.pixels(tgt)
             done = False
             for _ in range(6):
                 t = tf.sample(s.transform, rng)
@@ -559,7 +559,7 @@ class RecipePage(QWidget):
                     p = tf.apply(base, t, rng, s.transform.elastic_alpha, s.transform.elastic_sigma)
                 except ValueError:
                     continue
-                occ = gen._marked_mask(tgt.id, img.shape[:2]).copy() if s.avoid_marked_defects else None
+                occ = gen._marked_mask(tgt, img.shape[:2]).copy() if s.avoid_marked_defects else None
                 pos = find_position(p.mask, img.shape[:2], rng, mode, base.center, s.jitter, occ, None, s.min_gap)
                 if pos is None:
                     continue

@@ -15,6 +15,7 @@ class AppState(QObject):
     imagesChanged = Signal()
     defectsChanged = Signal()
     settingsChanged = Signal()
+    backgroundsChanged = Signal()
     datasetChanged = Signal()
     dirtyChanged = Signal(bool)
 
@@ -25,7 +26,7 @@ class AppState(QObject):
         self.staging: Path | None = None
         self.manifest: dict | None = None
         self._dirty = False
-        for sig in (self.imagesChanged, self.defectsChanged, self.settingsChanged):
+        for sig in (self.imagesChanged, self.defectsChanged, self.settingsChanged, self.backgroundsChanged):
             sig.connect(lambda *_: self.mark_dirty())
 
     @property
@@ -45,6 +46,7 @@ class AppState(QObject):
         self.imagesChanged.emit()
         self.defectsChanged.emit()
         self.settingsChanged.emit()
+        self.backgroundsChanged.emit()
         self.mark_dirty(False)
 
     def new_staging(self) -> Path:
