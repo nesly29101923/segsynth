@@ -49,35 +49,27 @@ Few clean images means few backgrounds. With **Create background images**, every
 
 ## Install
 
-Requires Python 3.10–3.13.
+Requires 64-bit Python 3.10–3.13.
+
+**Windows:** download or clone the repository and double-click **`start.bat`**. The first start creates a private `.venv` and installs everything with pip; later starts open the app directly. `start.bat debug` keeps a console open to show errors.
+
+Other systems:
 
 ```bash
-git clone https://github.com/<your-account>/segsynth.git
-cd segsynth
-python -m venv .venv
-# Windows: .venv\Scripts\activate    Linux/macOS: source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate
 pip install -e .
-segsynth            # or: python -m segsynth
+python -m segsynth
 ```
 
-Try it with demo data:
-
-```bash
-python examples/make_demo_images.py demo_images
-```
+Try it with demo data: `python examples/make_demo_images.py demo_images`
 
 ### Offline / air-gapped PCs
 
-Two options, both built automatically for every tagged release (see *Releases*):
+1. On a PC that can download Python packages, double-click **`make_offline_bundle.bat`** (or run `python packaging/build_offline_bundle.py --platform win_amd64`). It creates `release/SegSynth-<version>-offline-win_amd64.zip` (about 180 MB) with every dependency for Python 3.10–3.13.
+2. Copy the zip to the offline PC (USB, network share, Ethernet) and unzip it.
+3. Double-click **`start.bat`** in the unzipped folder. The first start installs from the included `wheelhouse` folder without internet (about a minute); later starts open the app directly. Unzipping a newer bundle over the folder is detected and installed automatically. `reinstall.bat` starts over from scratch.
 
-- **Standalone Windows build** (`SegSynth-x.y.z-windows-standalone.zip`) — unzip and run `SegSynth.exe`. No Python needed.
-- **Offline wheel bundle** (`SegSynth-x.y.z-offline-win_amd64.zip`) — for PCs with Python 3.10–3.13. Unzip, run `install.bat`, then `run.bat`. Nothing is downloaded during install.
-
-To build the offline bundle yourself on a machine with internet:
-
-```bash
-python packaging/build_offline_bundle.py --platform win_amd64
-```
+The offline PC needs 64-bit Python 3.10–3.13. If it has none, copy a Python installer (for example `python-3.12.x-amd64.exe`) along and install it first. A standalone `SegSynth.exe` that needs no Python is built by the release workflow for every tagged version.
 
 ## Headless use
 

@@ -2,6 +2,12 @@
 
 ## 1.5.1 — 2026-11-02
 
+Packaging update (2026-11-03):
+- One-click **`start.bat`**: in the offline bundle it installs from the wheelhouse on first start and opens the app afterwards, reinstalling automatically when a newer bundle is unzipped over it (`reinstall.bat` starts over). In the source folder it installs with pip on first start.
+- **`make_offline_bundle.bat`** builds the offline bundle on a PC with package access.
+- Batch files work in folder paths with spaces and avoid `&&`/`||`, whose exit-code handling differs between command interpreters.
+
+
 - **Real source images are no longer copied into the dataset or the database.** They can hold defects nobody labeled, which taught the model those defects are background. The dataset now contains only synthetic images (not good) and generated backgrounds (good). The "Include source images" option is removed.
 - New repair command for workspaces saved with 1.4/1.5.0: `python -m segsynth prune "<workspace>\META\<name>.sqlite"` removes the `real_*` images and any sample whose image file is missing, from both the database and `DATA`.
 
