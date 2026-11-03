@@ -7,7 +7,7 @@ Run on any machine with internet access:
 
 The result (release/SegSynth-<version>-offline-<platform>.zip) contains the app wheel,
 every dependency wheel for Python 3.10–3.13, and one-click install/run scripts.
-Copy it to the target PC by USB, unzip, run install, then run.
+Copy it to the target PC, unzip, and double-click start.bat.
 """
 from __future__ import annotations
 
@@ -25,48 +25,73 @@ PLATFORM_ALIASES = {
     "linux_aarch64": ["manylinux_2_28_aarch64", "manylinux_2_17_aarch64", "manylinux2014_aarch64"],
 }
 
-WIN_INSTALL = r"""@echo off
+WIN_START = r"""@echo off
+rem SegSynth __VERSION__ - double-click to start. The first start installs SegSynth from the
+rem wheelhouse folder (no internet needed). "start.bat debug" keeps a console open for errors.
 setlocal
 cd /d "%~dp0"
-echo.
-echo  SegSynth offline installer
-echo  --------------------------
-set "PY="
-where py >nul 2>nul && set "PY=py -3"
-if not defined PY where python >nul 2>nul && set "PY=python"
-if not defined PY (
-  echo  Python 3.10-3.13 was not found on this PC.
-  echo  Install Python first, or use the standalone SegSynth.exe build.
-  pause & exit /b 1
+set "APP_VERSION=__VERSION__"
+set "VPY=%~dp0.venv\Scripts\python.exe"
+if exist "%VPY%" (
+  "%VPY%" -c "import sys, segsynth, cv2, PySide6; sys.exit(segsynth.__version__ != '%APP_VERSION%')" >nul 2>nul
+  if not errorlevel 1 goto :launch
 )
-%PY% -c "import sys; sys.exit(0 if (3,10) <= sys.version_info[:2] <= (3,13) else 1)"
-if errorlevel 1 (
-  echo  Unsupported Python version. SegSynth needs Python 3.10 to 3.13.
-  %PY% --version
-  pause & exit /b 1
-)
-if exist .venv rmdir /s /q .venv
-%PY% -m venv .venv || goto :fail
-.venv\Scripts\python -m pip install --no-index --find-links wheelhouse segsynth || goto :fail
-echo.
-echo  Installed. Start SegSynth with run.bat
-pause
-exit /b 0
-:fail
-echo.
-echo  Installation failed. See the messages above.
-pause
-exit /b 1
-"""
+call :install
+if errorlevel 1 goto :fail
 
-WIN_RUN = r"""@echo off
-cd /d "%~dp0"
-if not exist .venv\Scripts\pythonw.exe (
-  echo Run install.bat first.
+:launch
+if /i "%~1"=="debug" (
+  "%VPY%" -m segsynth
   pause
+  exit /b
+)
+start "" "%~dp0.venv\Scripts\pythonw.exe" -m segsynth
+exit /b 0
+
+:install
+echo.
+echo  SegSynth %APP_VERSION% - first start, installing (about one minute)...
+echo.
+set "PY="
+where py >nul 2>nul
+if not errorlevel 1 (
+  for %%v in (3.12 3.13 3.11 3.10) do if not defined PY call :try_python "py -%%v"
+)
+if not defined PY (
+  where python >nul 2>nul
+  if not errorlevel 1 call :try_python "python"
+)
+if not defined PY (
+  echo  Python 3.10 - 3.13 ^(64-bit^) was not found on this PC.
+  echo  Install it first, for example python-3.12.x-amd64.exe copied from another PC,
+  echo  and tick "Add python.exe to PATH" in the installer. Then start this file again.
   exit /b 1
 )
-start "" .venv\Scripts\pythonw.exe -m segsynth
+if exist .venv rmdir /s /q .venv
+%PY% -m venv .venv
+if errorlevel 1 exit /b 1
+"%VPY%" -m pip install --no-index --find-links wheelhouse --disable-pip-version-check -q segsynth
+if errorlevel 1 exit /b 1
+echo  Installed.
+exit /b 0
+
+:fail
+echo.
+echo  SegSynth could not be installed. See the messages above.
+pause
+exit /b 1
+
+:try_python
+%~1 -c "import sys; sys.exit(0 if (3, 10) <= sys.version_info[:2] <= (3, 13) and sys.maxsize > 2**32 else 1)" >nul 2>nul
+if not errorlevel 1 set "PY=%~1"
+exit /b 0
+"""
+
+WIN_REINSTALL = r"""@echo off
+rem Removes the installed environment and installs SegSynth again from the wheelhouse folder.
+cd /d "%~dp0"
+if exist .venv rmdir /s /q .venv
+call "%~dp0start.bat"
 """
 
 SH_INSTALL = """#!/usr/bin/env bash
@@ -86,16 +111,19 @@ cd "$(dirname "$0")"
 exec .venv/bin/python -m segsynth "$@"
 """
 
-README = """SegSynth {version} — offline bundle ({platform})
+README = """SegSynth {version} - offline bundle ({platform})
 
-1. Copy this folder to the target PC (USB stick, network share, remote desktop).
-2. Run {install}. It creates a private environment in .venv next to this file.
-   Nothing is downloaded; all packages come from the wheelhouse folder.
-3. Start the app with {run}.
+1. Copy this whole folder to the target PC (USB stick, network share, Ethernet).
+2. Double-click {start}. The first start installs SegSynth into a private .venv
+   folder next to this file (about one minute, nothing is downloaded). Every later
+   start opens the app directly.
 
 Requirements: 64-bit Python 3.10, 3.11, 3.12 or 3.13 on the target PC.
-To update, unzip the new bundle over this folder and run {install} again.
-Headless use:  {python} -m segsynth generate path\\to\\project.json output_folder
+Update: unzip the new bundle over this folder and double-click {start};
+        a new version is detected and installed automatically.
+Problems: run "{start} debug" from a console to see error messages, or {reinstall}
+          to remove the environment and install again.
+Repair a saved workspace: {python} -m segsynth prune "path\\to\\META\\name.sqlite"
 """
 
 
@@ -134,8 +162,9 @@ def main() -> int:
                  "--only-binary=:all:", *platform_args, "--python-version", py,
                  "--implementation", "cp"])
         if windows:
-            (stage / "install.bat").write_text(WIN_INSTALL, encoding="utf-8", newline="\r\n")
-            (stage / "run.bat").write_text(WIN_RUN, encoding="utf-8", newline="\r\n")
+            (stage / "start.bat").write_text(WIN_START.replace("__VERSION__", __version__),
+                                             encoding="ascii", newline="\r\n")
+            (stage / "reinstall.bat").write_text(WIN_REINSTALL, encoding="ascii", newline="\r\n")
         else:
             for fname, body in (("install.sh", SH_INSTALL), ("run.sh", SH_RUN)):
                 p = stage / fname
@@ -143,8 +172,8 @@ def main() -> int:
                 p.chmod(0o755)
         (stage / "README.txt").write_text(README.format(
             version=__version__, platform=args.platform,
-            install="install.bat" if windows else "./install.sh",
-            run="run.bat" if windows else "./run.sh",
+            start="start.bat" if windows else "./install.sh, then ./run.sh",
+            reinstall="reinstall.bat" if windows else "./install.sh",
             python=r".venv\Scripts\python" if windows else ".venv/bin/python",
         ), encoding="utf-8", newline="\r\n" if windows else "\n")
         shutil.copy(ROOT / "LICENSE", stage / "LICENSE.txt")
