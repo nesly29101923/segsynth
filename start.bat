@@ -30,10 +30,11 @@ where py >nul 2>nul
 if not errorlevel 1 (
   for %%v in (3.12 3.13 3.11 3.10) do if not defined PY call :try_python "py -%%v"
 )
-if not defined PY (
-  where python >nul 2>nul
-  if not errorlevel 1 call :try_python "python"
-)
+for %%v in (312 313 311 310) do if not defined PY call :try_exe "%LocalAppData%\Programs\Python\Python%%v\python.exe"
+for %%d in ("%ProgramW6432%" "%ProgramFiles%") do for %%v in (312 313 311 310) do if not defined PY call :try_exe "%%~d\Python%%v\python.exe"
+if defined PY goto :python_found
+for /f "delims=" %%p in ('where python 2^>nul') do if not defined PY call :try_exe "%%p"
+:python_found
 if not defined PY (
   echo  Python 3.10 - 3.13 ^(64-bit^) was not found. Install it and start this file again.
   exit /b 1
@@ -56,4 +57,13 @@ exit /b 1
 :try_python
 %~1 -c "import sys; sys.exit(0 if (3, 10) <= sys.version_info[:2] <= (3, 13) and sys.maxsize > 2**32 else 1)" >nul 2>nul
 if not errorlevel 1 set "PY=%~1"
+exit /b 0
+
+:try_exe
+rem Skips missing files and the Microsoft Store shortcut (WindowsApps\python.exe), which opens the Store.
+if not exist "%~1" exit /b 0
+set "CANDIDATE=%~1"
+if /i not "%CANDIDATE:\WindowsApps\=%"=="%CANDIDATE%" exit /b 0
+"%~1" -c "import sys; sys.exit(0 if (3, 10) <= sys.version_info[:2] <= (3, 13) and sys.maxsize > 2**32 else 1)" >nul 2>nul
+if not errorlevel 1 set PY="%~1"
 exit /b 0

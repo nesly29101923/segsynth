@@ -1,11 +1,16 @@
 # Changelog
 
+## 1.5.2 — 2026-11-03
+
+Same features as 1.5.1; packaging and compatibility fixes.
+
+- **Self-contained Windows bundle.** The offline zip now contains its own Python 3.12 with every package installed. Nothing is installed on the target PC; `start.bat` only launches the app. This fixes the "Search for app in the Store?" dialog on PCs without Python, where Windows' Store shortcut for `python` was picked up.
+- **Windows 10 1809 / LTSC 2019 support.** PySide6 is limited to < 6.10, because Qt 6.10+ needs `icuuc.dll`, which those Windows versions do not have. The bundle ships the exact versions that pass the full test suite on Windows Python 3.12 (`packaging/windows-bundle-constraints.txt`).
+- Source-folder `start.bat` looks for Python in the standard install folders, then on PATH, and skips the Microsoft Store shortcut.
+
 ## 1.5.1 — 2026-11-02
 
-Packaging update (2026-11-03):
-- One-click **`start.bat`**: in the offline bundle it installs from the wheelhouse on first start and opens the app afterwards, reinstalling automatically when a newer bundle is unzipped over it (`reinstall.bat` starts over). In the source folder it installs with pip on first start.
-- **`make_offline_bundle.bat`** builds the offline bundle on a PC with package access.
-- Batch files work in folder paths with spaces and avoid `&&`/`||`, whose exit-code handling differs between command interpreters.
+Packaging update (2026-11-03): one-click `start.bat` in the source folder and the offline bundle, and `make_offline_bundle.bat`.
 
 
 - **Real source images are no longer copied into the dataset or the database.** They can hold defects nobody labeled, which taught the model those defects are background. The dataset now contains only synthetic images (not good) and generated backgrounds (good). The "Include source images" option is removed.
