@@ -65,11 +65,13 @@ Try it with demo data: `python examples/make_demo_images.py demo_images`
 
 ### Offline / air-gapped PCs
 
-1. On a PC that can download Python packages, double-click **`make_offline_bundle.bat`** (or run `python packaging/build_offline_bundle.py --platform win_amd64`). It creates `release/SegSynth-<version>-offline-win_amd64.zip` (about 180 MB) with every dependency for Python 3.10–3.13.
-2. Copy the zip to the offline PC (USB, network share, Ethernet) and unzip it.
-3. Double-click **`start.bat`** in the unzipped folder. The first start installs from the included `wheelhouse` folder without internet (about a minute); later starts open the app directly. Unzipping a newer bundle over the folder is detected and installed automatically. `reinstall.bat` starts over from scratch.
+The Windows offline bundle is self-contained: it includes its own Python 3.12 with every package installed, so the target PC needs nothing installed.
 
-The offline PC needs 64-bit Python 3.10–3.13. If it has none, copy a Python installer (for example `python-3.12.x-amd64.exe`) along and install it first. A standalone `SegSynth.exe` that needs no Python is built by the release workflow for every tagged version.
+1. On a PC with internet access, double-click **`make_offline_bundle.bat`** (or run `python packaging/build_offline_bundle.py --platform win_amd64`). It creates `release/SegSynth-<version>-offline-win_amd64.zip` (about 145 MB). It downloads a standalone Python build from GitHub; if GitHub is blocked, download that archive another way and pass it with `--python-dist path\to\archive.tar.gz`.
+2. Copy the zip to the offline PC (USB, network share, Ethernet) and unzip it.
+3. Double-click **`start.bat`** in the unzipped folder. `start.bat debug` keeps a console open to show errors.
+
+To update, delete the old folder and unzip the new bundle. Works on 64-bit Windows 10 (1809 / LTSC 2019 and newer) and Windows 11. The bundled package versions are pinned in `packaging/windows-bundle-constraints.txt`.
 
 ## Headless use
 

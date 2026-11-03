@@ -21,7 +21,7 @@ classifiers = [
 dependencies = [
     "numpy>=1.24",
     "opencv-python-headless>=4.8",
-    "PySide6-Essentials>=6.5",
+    "PySide6-Essentials>=6.5,<6.10",  # Qt 6.10+ needs icuuc.dll (Windows 10 1903+)
 ]
 
 [project.optional-dependencies]
