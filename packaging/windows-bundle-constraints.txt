@@ -1,0 +1,7 @@
+# Exact versions shipped in the self-contained Windows bundle.
+# This combination passes the full test suite on Windows Python 3.12.
+# Qt 6.10+ needs icuuc.dll, which Windows 10 1809 / LTSC 2019 lacks.
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+PySide6-Essentials==6.9.3
+shiboken6==6.9.3
