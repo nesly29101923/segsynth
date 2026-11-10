@@ -508,7 +508,6 @@ class DefectsPage(QWidget):
     def _update_image_caption(self, image_id: str | None) -> None:
         if image_id is None:
             return
-        proj = self.state.project
         for i in range(self.images.count()):
             it = self.images.item(i)
             if it.data(Qt.UserRole) == image_id:
