@@ -497,12 +497,12 @@ class RecipePage(QWidget):
         d = proj.defect(did)
         s = proj.settings
         rng = np.random.default_rng()
+        in_slots = placement_of(proj, d) == "slots"
         try:
-            base = gen.patch(d)
+            gen.slot_patch(d) if in_slots else gen.patch(d)
         except Exception as exc:
             self._clear_preview(f"Cannot preview: {exc}")
             return
-        in_slots = placement_of(proj, d) == "slots"
         if in_slots:
             targets = [t for t in targets if gen.target_slots(t)]
             if not targets:
