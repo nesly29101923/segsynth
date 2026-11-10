@@ -10,10 +10,13 @@ import numpy as np
 
 from .backgrounds import BackgroundSettings
 from .imageio import read_image, read_mask, write_image
+from .slots import Slot
 from .transform import TransformParams
 
 PROJECT_FILE = "project.json"
 FORMAT_VERSION = 1
+LABEL_DEFECT = "defect"
+LABEL_GOOD = "good"
 
 
 def new_id() -> str:
@@ -25,10 +28,24 @@ class ImageEntry:
     id: str
     path: str
     use_as_target: bool = True
+    slots: list[Slot] = field(default_factory=list)
 
     @property
     def name(self) -> str:
         return Path(self.path).name
+
+    @property
+    def target_slots(self) -> list[Slot]:
+        return [s for s in self.slots if s.target]
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "path": self.path, "use_as_target": self.use_as_target,
+                "slots": [s.to_dict() for s in self.slots]}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ImageEntry":
+        return cls(id=d["id"], path=d["path"], use_as_target=d.get("use_as_target", True),
+                   slots=[Slot.from_dict(s) for s in d.get("slots", [])])
 
 
 @dataclass
@@ -39,6 +56,7 @@ class DefectEntry:
     count: int = 10
     enabled: bool = True
     placement: str = ""          # empty = use global setting
+    label: str = LABEL_DEFECT    # LABEL_DEFECT: labeled with the defect class; LABEL_GOOD: pasted unlabeled
     mask: np.ndarray | None = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict:
@@ -59,6 +77,7 @@ class GenerationSettings:
     jitter: int = 60
     min_gap: int = 10
     avoid_marked_defects: bool = True
+    slot_match: float = 0.5      # template match score; slots below it "look empty"
     transform: TransformParams = field(default_factory=TransformParams)
     save_masks: bool = False
     save_overlays: bool = False
@@ -146,9 +165,12 @@ class Project:
     def defects_of(self, image_id: str) -> list[DefectEntry]:
         return [d for d in self.defects if d.image_id == image_id]
 
-    def marked_mask(self, image_id: str, shape: tuple[int, int]) -> np.ndarray:
+    def marked_mask(self, image_id: str, shape: tuple[int, int], labeled_only: bool = True) -> np.ndarray:
+        """Union of the pieces picked on an image (only those labeled as defects by default)."""
         m = np.zeros(shape, np.uint8)
         for d in self.defects_of(image_id):
+            if labeled_only and d.label != LABEL_DEFECT:
+                continue
             if d.mask is not None and d.mask.shape == shape:
                 m |= d.mask
         return m
@@ -171,7 +193,7 @@ class Project:
         data = {
             "format_version": FORMAT_VERSION,
             "name": self.name,
-            "images": [asdict(e) for e in self.images],
+            "images": [e.to_dict() for e in self.images],
             "defects": [d.to_dict() for d in self.defects],
             "settings": self.settings.to_dict(),
             "backgrounds": self.backgrounds.to_dict(),
@@ -190,7 +212,7 @@ class Project:
         folder = path.parent
         proj = cls(
             name=data.get("name", "Untitled dataset"),
-            images=[ImageEntry(**e) for e in data.get("images", [])],
+            images=[ImageEntry.from_dict(e) for e in data.get("images", [])],
             settings=GenerationSettings.from_dict(data.get("settings", {})),
             backgrounds=BackgroundSettings.from_dict(data.get("backgrounds", {})),
             folder=folder,

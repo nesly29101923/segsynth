@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.0 — 2026-11-10
+
+- **Slots: precise placement.** New *Slots* mode on the Pick defects page. Box one pocket and press Detect: every similar pocket is found, the grid is completed, and poorly matching positions (usually empty pockets) are marked. Click pockets to make them targets; move, add and remove slots with the mouse; set the slot size and match strength. Detect on all images reuses the same pocket.
+- New placement **Into slots (exact centre)**: pieces are centred exactly on target slots, with only rotation and contrast varying. *Defects per image* sets how many slots are filled per image. The recipe preview shows the real result.
+- **Per-piece label.** Each picked piece is labeled either as a defect (pasted copies get the defect class) or as a good part (pasted copies stay background). A piece placed into a slot replaces the pocket's content, including any labeled defect there.
+- Slots, targets and labels are saved in the project.
+
 ## 1.5.2 — 2026-11-03
 
 Same features as 1.5.1; packaging and compatibility fixes.

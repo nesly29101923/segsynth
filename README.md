@@ -24,7 +24,7 @@ When only a handful of defect images exist, a segmentation model sees each defec
 |---|---|
 | **1 · Source images** | Add your real images. Tick which ones may receive synthetic defects (clean *and* defective images both work as backgrounds). |
 | **2 · Background generating** *(optional)* | Tick **Create background images** in step 1. Each image is cut into pieces; click every piece that is not good. Good pieces from different images are aligned and stitched into new clean backgrounds. |
-| **3 · Pick defects** | Brush, box or lasso each defect you want to reproduce. **Snap to defect** shrinks a rough selection to the pixels that stand out from the surface. Only the defects you pick are used — harmless marks can be left alone. |
+| **3 · Pick defects** | Brush, box or lasso each defect you want to reproduce. **Snap to defect** shrinks a rough selection to the pixels that stand out from the surface. Only the defects you pick are used — harmless marks can be left alone. Each piece is labeled as a defect or as a good part. Switch to **Slots** to mark exact target positions (see below). |
 | **4 · Recipe** | Set how many images to create per defect and how much each copy may vary. **Shuffle preview** shows live variations with the current settings. |
 | **5 · Generate** | Runs in the background with progress and a live gallery. Double-click a result to inspect it at full resolution. |
 | **6 · Save dataset** | Copy the result to its destination folder (optionally zipped). |
@@ -46,6 +46,21 @@ Few clean images means few backgrounds. With **Create background images**, every
 - **No visible seams.** Each image is shifted to line up with the first one, then neighbouring pieces are cross-faded over the *Seam blend* band. Cut across the texture (horizontal cuts for grooves running top to bottom) for the most natural result.
 - **Labels stay correct.** Generated backgrounds are added to the dataset as good images. If you picked a defect on a source image and keep its piece, the defect follows the piece and the background is labeled bad.
 - **Max backgrounds** caps the count; above it a random, reproducible selection is used.
+
+## Slots: precise placement
+
+![Slots](docs/images/slots.png)
+
+For parts in trays, blisters or fixtures, pieces should not land anywhere. They should land exactly in a pocket. On the **Pick defects** page, switch to **Slots**:
+
+1. Drag a box around one pocket (a filled one works best) and press **Detect**. Every similar pocket is found by template matching. The regular grid they form is fitted, and grid positions that match poorly (usually empty pockets) are added as well and drawn dashed red.
+2. Click the pockets that pieces may go into; they turn amber. **Select empty-looking** marks all dashed slots at once. Drag a slot to move it, Shift+click to add one, right-click to remove one. **Size** sets the slot radius and **Match** sets how similar a pocket must be. **Detect on all images** reuses the boxed pocket for every image.
+3. Back in **Defects**, pick the pieces to copy and choose their **Label**:
+   - **Defect (labeled)**: pasted copies carry the defect class.
+   - **Good part (not labeled)**: pasted copies stay background, e.g. a normal part filling an empty pocket.
+4. On the **Recipe** page, set the placement to **Into slots (exact centre)**, globally or per piece. **Defects per image** sets how many target slots are filled in each image.
+
+The centre of each piece is placed exactly on the centre of a target slot. If the piece was picked inside a slot, that slot's centre is the anchor; otherwise the centre of the selection is. Only **Rotation** and **Contrast** vary; size and shape stay as picked. The piece replaces the pocket's content with a feathered paste, and any labeled defect it covers is removed from the label.
 
 ## Install
 
@@ -132,7 +147,9 @@ It removes the real images and every sample whose image file is missing, from bo
 | Surface texture | Direction of the background estimate: vertical, horizontal, isotropic, or off (raw pixels). |
 | Texture window | Length of the background window; should be larger than the defect. |
 | Edge softness | Feathering of the paste boundary. |
-| Defects per image | 1 = only the recipe defect; higher adds random extra defects. |
+| Defects per image | 1 = only the recipe defect; higher adds random extra defects. With *Into slots*: how many target slots get a piece. |
+| Placement | Anywhere, same column, same row, near the original spot, or *Into slots* (exact slot centres). |
+| Label (per piece) | Defect: pasted copies are labeled. Good part: pasted copies stay background. |
 | Generate a .sqlite file | On the Save page: writes `<dataset>.sqlite`; set the defect class name and colour there. |
 
 ## Development
