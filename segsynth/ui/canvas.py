@@ -13,10 +13,14 @@ from PySide6.QtWidgets import (
     QGraphicsRectItem, QGraphicsScene, QGraphicsView,
 )
 
+from ..core.slots import Slot
 from .qt_utils import mask_to_qimage, np_to_pixmap, qimage_alpha_to_mask
-from .theme import ACCENT
+from .theme import ACCENT, WARN
 
 EDIT_COLOR = QColor("#3fe0cf")
+SLOT_TARGET = QColor(WARN)
+SLOT_EMPTY = QColor("#ff6b78")
+SLOT_OTHER = QColor(255, 255, 255, 150)
 
 
 class Tool(str, Enum):
@@ -46,8 +50,58 @@ class ImageLayer(QGraphicsItem):
             painter.drawImage(option.exposedRect, self.image, option.exposedRect)
 
 
+class SlotLayer(QGraphicsItem):
+    """Draws slots: targets solid amber, empty-looking ones dashed red, others thin white."""
+
+    def __init__(self):
+        super().__init__()
+        self.slots: list[Slot] = []
+        self.threshold = 0.5
+        self.hover = -1
+        self._rect = QRectF()
+
+    def set_slots(self, slots: list[Slot], threshold: float) -> None:
+        self.prepareGeometryChange()
+        self.slots = slots
+        self.threshold = threshold
+        if slots:
+            pad = max(s.r for s in slots) + 8
+            xs = [s.x for s in slots]
+            ys = [s.y for s in slots]
+            self._rect = QRectF(min(xs) - pad, min(ys) - pad, max(xs) - min(xs) + 2 * pad, max(ys) - min(ys) + 2 * pad)
+        else:
+            self._rect = QRectF()
+        self.update()
+
+    def boundingRect(self) -> QRectF:
+        return self._rect
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        for i, s in enumerate(self.slots):
+            if s.target:
+                pen = QPen(SLOT_TARGET, 3.0)
+                fill = QColor(SLOT_TARGET)
+                fill.setAlpha(60)
+            elif s.score < self.threshold:
+                pen = QPen(SLOT_EMPTY, 2.0, Qt.DashLine)
+                fill = QColor(0, 0, 0, 0)
+            else:
+                pen = QPen(SLOT_OTHER, 1.2)
+                fill = QColor(0, 0, 0, 0)
+            if i == self.hover:
+                pen.setWidthF(pen.widthF() + 1.5)
+                pen.setColor(pen.color().lighter(130))
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.setBrush(fill)
+            painter.drawEllipse(QPointF(s.x, s.y), s.r, s.r)
+
+
 class MaskCanvas(QGraphicsView):
     editChanged = Signal()
+    slotsEdited = Signal()
+    slotBoxChanged = Signal()
     zoomChanged = Signal(float)
     cursorMoved = Signal(int, int)
 
@@ -95,6 +149,16 @@ class MaskCanvas(QGraphicsView):
             it.setVisible(False)
             self.scene().addItem(it)
 
+        self.slot_layer = SlotLayer()
+        self.slot_layer.setZValue(5)
+        self.slot_layer.setVisible(False)
+        self.scene().addItem(self.slot_layer)
+        self.slot_mode = False
+        self.slot_box: QRectF | None = None
+        self._slot_press = -1
+        self._slot_drag = False
+        self._slot_offset = QPointF()
+
         self.tool = Tool.BRUSH
         self.brush_size = 18
         self._editable = False
@@ -115,6 +179,7 @@ class MaskCanvas(QGraphicsView):
     def set_image(self, img: np.ndarray | None) -> None:
         self._undo.clear()
         self._redo.clear()
+        self.clear_slot_box()
         if img is None:
             self.base.setPixmap(QPixmap())
             self.committed.set_image(QImage())
@@ -194,6 +259,105 @@ class MaskCanvas(QGraphicsView):
             self.edit.set_image(self._redo.pop())
             self.editChanged.emit()
 
+    # slots ---------------------------------------------------------------
+    def set_slot_mode(self, on: bool) -> None:
+        self.slot_mode = on
+        self.slot_layer.setVisible(on)
+        self.edit.setVisible(not on)
+        if not on:
+            self.clear_slot_box()
+        self._update_cursor()
+
+    def set_slots(self, slots: list[Slot], threshold: float) -> None:
+        self.slot_layer.set_slots(slots, threshold)
+
+    def refresh_slots(self) -> None:
+        self.slot_layer.set_slots(self.slot_layer.slots, self.slot_layer.threshold)
+
+    def clear_slot_box(self) -> None:
+        self.slot_box = None
+        self.rubber.setVisible(False)
+        self.slotBoxChanged.emit()
+
+    def slot_at(self, p: QPointF) -> int:
+        best, best_d = -1, None
+        for i, s in enumerate(self.slot_layer.slots):
+            d = (s.x - p.x()) ** 2 + (s.y - p.y()) ** 2
+            if d <= s.r ** 2 and (best_d is None or d < best_d):
+                best, best_d = i, d
+        return best
+
+    def _default_radius(self) -> float:
+        rs = sorted(s.r for s in self.slot_layer.slots)
+        return rs[len(rs) // 2] if rs else max(8.0, min(self.image_size()) / 40)
+
+    def _slot_press_event(self, e, sp: QPointF) -> None:
+        slots = self.slot_layer.slots
+        hit = self.slot_at(sp)
+        if e.button() == Qt.RightButton:
+            if hit >= 0:
+                del slots[hit]
+                self.slot_layer.hover = -1
+                self.refresh_slots()
+                self.slotsEdited.emit()
+            return
+        if e.button() != Qt.LeftButton:
+            return
+        if e.modifiers() & Qt.ShiftModifier:
+            if hit < 0:
+                slots.append(Slot(sp.x(), sp.y(), self._default_radius(), True, 0.0))
+                self.refresh_slots()
+                self.slotsEdited.emit()
+            return
+        if hit >= 0:
+            self._slot_press = hit
+            self._slot_drag = False
+            self._start = sp
+            self._slot_offset = QPointF(slots[hit].x - sp.x(), slots[hit].y - sp.y())
+            return
+        self._drawing = True
+        self._start = sp
+        self.rubber.setRect(QRectF(sp, sp))
+        self.rubber.setVisible(True)
+
+    def _slot_move_event(self, sp: QPointF) -> None:
+        if self._slot_press >= 0:
+            d = sp - self._start
+            if not self._slot_drag and (d.x() ** 2 + d.y() ** 2) * self._zoom ** 2 > 16:
+                self._slot_drag = True
+            if self._slot_drag:
+                s = self.slot_layer.slots[self._slot_press]
+                c = self._clamp(sp + self._slot_offset)
+                s.x, s.y = c.x(), c.y()
+                self.refresh_slots()
+            return
+        if self._drawing:
+            self.rubber.setRect(QRectF(self._start, self._clamp(sp)).normalized())
+            return
+        hover = self.slot_at(sp)
+        if hover != self.slot_layer.hover:
+            self.slot_layer.hover = hover
+            self.slot_layer.update()
+
+    def _slot_release_event(self) -> None:
+        if self._slot_press >= 0:
+            s = self.slot_layer.slots[self._slot_press]
+            if not self._slot_drag:
+                s.target = not s.target
+            self._slot_press = -1
+            self.refresh_slots()
+            self.slotsEdited.emit()
+            return
+        if self._drawing:
+            self._drawing = False
+            r = self.rubber.rect()
+            if r.width() >= 6 and r.height() >= 6:
+                self.slot_box = r
+            else:
+                self.slot_box = None
+                self.rubber.setVisible(False)
+            self.slotBoxChanged.emit()
+
     # tools ---------------------------------------------------------------
     def set_tool(self, tool: Tool) -> None:
         self.tool = Tool(tool)
@@ -204,8 +368,8 @@ class MaskCanvas(QGraphicsView):
         self._update_cursor()
 
     def _update_cursor(self, scene_pos: QPointF | None = None) -> None:
-        brushy = self.tool in (Tool.BRUSH, Tool.ERASER) and not self._space
-        if self.tool == Tool.PAN or self._space:
+        brushy = self.tool in (Tool.BRUSH, Tool.ERASER) and not self._space and not self.slot_mode
+        if self._space or (self.tool == Tool.PAN and not self.slot_mode):
             self.viewport().setCursor(Qt.ClosedHandCursor if self._panning else Qt.OpenHandCursor)
         elif brushy:
             self.viewport().setCursor(Qt.BlankCursor if self.underMouse() else Qt.ArrowCursor)
@@ -242,7 +406,7 @@ class MaskCanvas(QGraphicsView):
     def wheelEvent(self, e) -> None:
         if not self._editable:
             return
-        if e.modifiers() & Qt.ControlModifier and self.tool in (Tool.BRUSH, Tool.ERASER):
+        if e.modifiers() & Qt.ControlModifier and self.tool in (Tool.BRUSH, Tool.ERASER) and not self.slot_mode:
             step = 1 if e.angleDelta().y() > 0 else -1
             self.set_brush_size(self.brush_size + step * max(1, self.brush_size // 8))
             return
@@ -289,12 +453,16 @@ class MaskCanvas(QGraphicsView):
     def mousePressEvent(self, e) -> None:
         if not self._editable:
             return
-        if e.button() == Qt.MiddleButton or (e.button() == Qt.LeftButton and (self._space or self.tool == Tool.PAN)):
+        pan_tool = self.tool == Tool.PAN and not self.slot_mode
+        if e.button() == Qt.MiddleButton or (e.button() == Qt.LeftButton and (self._space or pan_tool)):
             self._panning = True
             self._pan_origin = e.position()
             self._update_cursor()
             return
         sp = self._clamp(self.mapToScene(e.position().toPoint()))
+        if self.slot_mode:
+            self._slot_press_event(e, sp)
+            return
         if e.button() not in (Qt.LeftButton, Qt.RightButton):
             return
         subtract = e.button() == Qt.RightButton or bool(e.modifiers() & Qt.AltModifier)
@@ -328,6 +496,9 @@ class MaskCanvas(QGraphicsView):
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - int(d.y()))
             return
         self._update_cursor(sp)
+        if self.slot_mode:
+            self._slot_move_event(sp)
+            return
         if not self._drawing:
             return
         sp = self._clamp(sp)
@@ -344,6 +515,9 @@ class MaskCanvas(QGraphicsView):
         if self._panning:
             self._panning = False
             self._update_cursor()
+            return
+        if self.slot_mode:
+            self._slot_release_event()
             return
         if not self._drawing:
             return

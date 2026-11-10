@@ -19,8 +19,9 @@ from .blend import BlendMode, blend
 from .imageio import max_value, write_image
 from .export import export_dataset, label_path
 from .patch import DefectPatch, extract_patch
-from .placement import find_position
-from .project import DefectEntry, Project
+from .placement import PlacementMode, find_position
+from .project import LABEL_DEFECT, DefectEntry, Project
+from .slots import anchor_for, slot_patch, turn_patch
 
 
 @dataclass
@@ -85,7 +86,16 @@ def validate(project: Project) -> list[str]:
         shapes.add(len(shp) == 3 and shp[2])
     if len(shapes) > 1:
         problems.append("Target images mix grayscale and color; use one kind.")
+    if any(placement_of(project, d) == PlacementMode.SLOTS for d in active):
+        if not any(e.use_as_target and e.target_slots for e in project.images):
+            problems.append("“Into slots” needs target slots: on the Pick defects page switch to Slots, "
+                            "detect the pockets and click the ones pieces may go into. The image must also "
+                            "be ticked as a background on the Source images page.")
     return problems
+
+
+def placement_of(project: Project, d: DefectEntry) -> str:
+    return d.placement or project.settings.placement_mode
 
 
 class Generator:
@@ -93,6 +103,7 @@ class Generator:
         self.project = project
         self.s = project.settings
         self._patches: dict[str, DefectPatch] = {}
+        self._slot_patches: dict[str, DefectPatch] = {}
         self._marked: dict[str, np.ndarray] = {}
         self.composer = make_composer(project)
         self.targets = list_targets(project, self.composer)
@@ -102,6 +113,16 @@ class Generator:
             img = self.project.load_pixels(d.image_id)
             self._patches[d.id] = extract_patch(img, d.mask, self.s.bg_mode, self.s.bg_size, self.s.feather)
         return self._patches[d.id]
+
+    def slot_patch(self, d: DefectEntry) -> DefectPatch:
+        if d.id not in self._slot_patches:
+            img = self.project.load_pixels(d.image_id)
+            center = anchor_for(d.mask, self.project.image(d.image_id).slots)
+            self._slot_patches[d.id] = slot_patch(img, d.mask, center, self.s.feather)
+        return self._slot_patches[d.id]
+
+    def target_slots(self, t: Target) -> list:
+        return [] if t.generated else self.project.image(t.image_id).target_slots
 
     def pixels(self, t: Target) -> np.ndarray:
         if t.generated:
@@ -129,15 +150,28 @@ class Generator:
         rng.shuffle(jobs)
         return jobs
 
-    def _blend_mode(self, rng) -> BlendMode:
+    def _blend_mode(self, rng, slots: bool = False) -> BlendMode:
         modes = [BlendMode(m) for m in self.s.blend_modes] or [BlendMode.RESIDUAL]
-        if BackgroundMode(self.s.bg_mode) == BackgroundMode.NONE:
+        if slots:
+            # a whole piece replaces the pocket's content; adding a residual makes no sense
+            modes = [m for m in modes if m != BlendMode.RESIDUAL] or [BlendMode.ALPHA]
+        elif BackgroundMode(self.s.bg_mode) == BackgroundMode.NONE:
             modes = [m for m in modes if m != BlendMode.RESIDUAL] or [BlendMode.ALPHA]
         return modes[int(rng.integers(len(modes)))]
 
-    def _paste(self, canvas, label, occupied, d: DefectEntry, target_shape, rng, max_val):
+    def paste(self, canvas, label, occupied, d: DefectEntry, tgt: Target, rng, max_val,
+              used: set | None = None, existing: np.ndarray | None = None):
+        """Paste one varied copy of d. Returns (canvas, info) with info None if nothing fit.
+
+        label receives the pasted piece (if it is labeled as a defect). In slot mode the piece
+        covers the pocket, so labels in `existing` (picked defects on the target) under it are cleared.
+        """
+        if placement_of(self.project, d) == PlacementMode.SLOTS:
+            return self._paste_slot(canvas, label, occupied, d, tgt, rng, max_val,
+                                    used if used is not None else set(), existing)
+        target_shape = canvas.shape[:2]
         base = self.patch(d)
-        mode = d.placement or self.s.placement_mode
+        mode = placement_of(self.project, d)
         for _ in range(6):
             t = tf.sample(self.s.transform, rng)
             try:
@@ -153,11 +187,13 @@ class Generator:
             bm = self._blend_mode(rng)
             canvas = blend(canvas, p, pos, bm, max_val)
             x, y = pos
-            label[y:y + ph, x:x + pw] |= p.mask
+            if d.label == LABEL_DEFECT:
+                label[y:y + ph, x:x + pw] |= p.mask
             occupied[y:y + ph, x:x + pw] |= p.mask
             return canvas, {
                 "defect_id": d.id,
                 "defect_name": d.name,
+                "label": d.label,
                 "source_image": self.project.image(d.image_id).name,
                 "position": [int(x), int(y)],
                 "size": [int(pw), int(ph)],
@@ -166,6 +202,47 @@ class Generator:
                 "transform": t.to_dict(),
             }
         return canvas, None
+
+    def _paste_slot(self, canvas, label, occupied, d: DefectEntry, tgt: Target, rng, max_val, used: set,
+                    existing: np.ndarray | None = None):
+        th, tw = canvas.shape[:2]
+        base = self.slot_patch(d)
+        half = base.mask.shape[0] // 2
+        free = [i for i, sl in enumerate(self.target_slots(tgt))
+                if i not in used and half <= round(sl.x) < tw - half and half <= round(sl.y) < th - half]
+        if not free:
+            return canvas, None
+        i = free[int(rng.integers(len(free)))]
+        sl = self.target_slots(tgt)[i]
+        tr = self.s.transform
+        angle = float(rng.uniform(*sorted(tr.rotation))) if tr.rotation[0] != tr.rotation[1] else float(tr.rotation[0])
+        contrast = float(rng.uniform(*sorted(tr.intensity))) if tr.intensity[0] != tr.intensity[1] else float(tr.intensity[0])
+        p = turn_patch(base, angle, contrast)
+        x, y = int(round(sl.x)) - half, int(round(sl.y)) - half
+        bm = self._blend_mode(rng, slots=True)
+        canvas = blend(canvas, p, (x, y), bm, max_val)
+        n = p.mask.shape[0]
+        covered = p.alpha > 0.5
+        # the piece now covers whatever was in the pocket, including picked defects there
+        label[y:y + n, x:x + n][covered] = 0
+        if existing is not None:
+            existing[y:y + n, x:x + n][covered] = 0
+        if d.label == LABEL_DEFECT:
+            label[y:y + n, x:x + n] |= p.mask
+        occupied[y:y + n, x:x + n] |= covered.astype(np.uint8)
+        used.add(i)
+        return canvas, {
+            "defect_id": d.id,
+            "defect_name": d.name,
+            "label": d.label,
+            "source_image": self.project.image(d.image_id).name,
+            "position": [x, y],
+            "size": [n, n],
+            "slot": [round(sl.x, 1), round(sl.y, 1)],
+            "blend": bm.value,
+            "placement": PlacementMode.SLOTS.value,
+            "transform": {"rotation": round(angle, 2), "intensity": round(contrast, 3)},
+        }
 
     def generate(
         self,
@@ -188,30 +265,43 @@ class Generator:
                 cycle.extend(targets[i] for i in rng.permutation(len(targets)))
             return cycle.pop()
 
+        slot_targets = [t for t in targets if self.target_slots(t)]
+        slot_cycle: list = []
+
+        def next_slot_target():
+            if not slot_cycle:
+                slot_cycle.extend(slot_targets[i] for i in rng.permutation(len(slot_targets)))
+            return slot_cycle.pop()
+
         for index, defect_id in enumerate(self.plan(rng)):
             if stop is not None and stop.is_set():
                 return
             primary = self.project.defect(defect_id)
+            in_slots = placement_of(self.project, primary) == PlacementMode.SLOTS
+            pool = slot_targets if in_slots else targets
             sample = None
-            for _ in range(max(4, len(targets))):
-                tgt = next_target()
+            for _ in range(max(4, len(pool))):
+                if not pool:
+                    break
+                tgt = next_slot_target() if in_slots else next_target()
                 img = self.pixels(tgt)
                 shape = img.shape[:2]
                 occupied = self._marked_mask(tgt, shape).copy() if self.s.avoid_marked_defects \
                     else np.zeros(shape, np.uint8)
-                label = np.zeros(shape, np.uint8)
+                label = self.labels(tgt, shape).copy()
+                pasted = np.zeros(shape, np.uint8)
+                used: set = set()
                 canvas = img
-                canvas, info = self._paste(canvas, label, occupied, primary, shape, rng, max_value(img))
+                canvas, info = self.paste(canvas, pasted, occupied, primary, tgt, rng, max_value(img), used, label)
                 if info is None:
                     continue
                 placed = [info]
                 for _ in range(int(rng.integers(lo, hi + 1)) - 1):
                     extra = active[int(rng.integers(len(active)))]
-                    canvas, info = self._paste(canvas, label, occupied, extra, shape, rng, max_value(img))
+                    canvas, info = self.paste(canvas, pasted, occupied, extra, tgt, rng, max_value(img), used, label)
                     if info is not None:
                         placed.append(info)
-                pasted = label.copy()
-                label |= self.labels(tgt, shape)
+                label |= pasted
                 meta = {"target_image": tgt.name, "defects": placed}
                 if tgt.generated:
                     meta["target_pieces"] = self.composer.describe(tgt.combo)
@@ -223,6 +313,11 @@ class Generator:
                     meta=meta,
                 )
                 break
+            if sample is None and in_slots:
+                raise GenerationError(
+                    f"No free target slot fits '{primary.name}'. Mark more target slots, or check that "
+                    f"the slots are not at the very edge of the image."
+                )
             if sample is None:
                 raise GenerationError(
                     f"Could not place '{primary.name}' on any target. Reduce scale, jitter or gap, "
