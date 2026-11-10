@@ -12,6 +12,7 @@ class PlacementMode(str, Enum):
     KEEP_COLUMN = "keep_column"
     KEEP_ROW = "keep_row"
     NEAR_SOURCE = "near_source"
+    SLOTS = "slots"          # exact slot centres; handled by the generator, random here
 
 
 def find_position(

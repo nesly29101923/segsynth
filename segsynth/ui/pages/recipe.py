@@ -9,11 +9,8 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from ...core import transform as tf
-from ...core.blend import blend
-from ...core.generator import Generator
+from ...core.generator import Generator, placement_of
 from ...core.imageio import max_value
-from ...core.placement import find_position
 from ..qt_utils import crop_preview, label, np_to_pixmap, page_header, untinted_icon
 from ..state import AppState
 
@@ -22,6 +19,7 @@ PLACEMENTS = [
     ("keep_column", "Same column (move vertically)"),
     ("keep_row", "Same row (move horizontally)"),
     ("near_source", "Near original spot"),
+    ("slots", "Into slots (exact centre)"),
 ]
 BG_MODES = [
     ("vertical", "Vertical texture (grooves run top–bottom)"),
@@ -206,8 +204,14 @@ class RecipePage(QWidget):
         f.addRow(self._tip("Default placement", "Per-defect placement in the table overrides this."), self.placement)
         f.addRow(self._tip("Movement range", "Maximum offset for the “same column/row” and “near original” modes."), self.jitter)
         f.addRow(self._tip("Minimum gap", "Clearance between pasted defects."), self.gap)
-        f.addRow(self._tip("Defects per image", "1 = only the recipe defect. Higher adds random extra defects."), self.per_image)
+        f.addRow(self._tip("Defects per image", "1 = only the recipe defect. Higher adds random extra defects.\n"
+                                                "Into slots: how many target slots get a piece in each image."), self.per_image)
         f.addRow("", self.avoid)
+        self.slot_note = label(
+            "Into slots: each piece is centred exactly on a target slot (marked on the Pick defects page). "
+            "Only Rotation and Contrast vary; size and shape stay as picked. Texture-preserving blending is "
+            "replaced by Soft paste, because the piece replaces the pocket's content.", "Muted", wrap=True)
+        f.addRow(self.slot_note)
         pl.addWidget(g)
 
         g = QGroupBox("Blending")
@@ -285,6 +289,7 @@ class RecipePage(QWidget):
 
         state.defectsChanged.connect(self.refresh_table)
         state.imagesChanged.connect(self.refresh_table)
+        state.settingsChanged.connect(self._update_slot_note)
         state.projectReplaced.connect(self.load_settings)
         self.load_settings()
         self.refresh_table()
@@ -407,6 +412,7 @@ class RecipePage(QWidget):
             self.table.setCellWidget(row, self.COL_USE, self._centered(use, Qt.AlignCenter))
         self.table.blockSignals(False)
         self._update_total()
+        self._update_slot_note()
         if proj.defects:
             ids = [d.id for d in proj.defects]
             self.table.selectRow(ids.index(selected) if selected in ids else 0)
@@ -443,6 +449,14 @@ class RecipePage(QWidget):
     def _set_placement(self, did: str, v: str) -> None:
         self.state.project.defect(did).placement = v
         self.state.mark_dirty()
+        self._update_slot_note()
+        if did == self._selected_id():
+            self.preview()
+
+    def _update_slot_note(self, *_) -> None:
+        proj = self.state.project
+        self.slot_note.setVisible(proj.settings.placement_mode == "slots" or
+                                  any(d.placement == "slots" for d in proj.defects))
 
     def _on_item_changed(self, item: QTableWidgetItem) -> None:
         if item.column() != self.COL_NAME:
@@ -488,32 +502,27 @@ class RecipePage(QWidget):
         except Exception as exc:
             self._clear_preview(f"Cannot preview: {exc}")
             return
-        mode = d.placement or s.placement_mode
+        in_slots = placement_of(proj, d) == "slots"
+        if in_slots:
+            targets = [t for t in targets if gen.target_slots(t)]
+            if not targets:
+                self._clear_preview("No target slots yet: on the Pick defects page switch to Slots, detect the "
+                                    "pockets and click the ones pieces may go into.")
+                return
         shown = 0
         for tile in self.preview_tiles:
             tgt = targets[int(rng.integers(len(targets)))]
             img = gen.pixels(tgt)
-            done = False
-            for _ in range(6):
-                t = tf.sample(s.transform, rng)
-                try:
-                    p = tf.apply(base, t, rng, s.transform.elastic_alpha, s.transform.elastic_sigma)
-                except ValueError:
-                    continue
-                occ = gen._marked_mask(tgt, img.shape[:2]).copy() if s.avoid_marked_defects else None
-                pos = find_position(p.mask, img.shape[:2], rng, mode, base.center, s.jitter, occ, None, s.min_gap)
-                if pos is None:
-                    continue
-                out = blend(img, p, pos, gen._blend_mode(rng), max_value(img))
-                m = np.zeros(img.shape[:2], np.uint8)
-                x, y = pos
-                m[y:y + p.mask.shape[0], x:x + p.mask.shape[1]] = p.mask
-                tile.setPixmap(np_to_pixmap(crop_preview(out, m, pad=60, side=150)))
-                done = True
-                shown += 1
-                break
-            if not done:
+            shape = img.shape[:2]
+            occ = gen._marked_mask(tgt, shape).copy() if s.avoid_marked_defects else np.zeros(shape, np.uint8)
+            before = occ.copy()
+            out, info = gen.paste(img, np.zeros(shape, np.uint8), occ, d, tgt, rng, max_value(img))
+            if info is None:
                 tile.clear()
+                continue
+            m = (occ > before).astype(np.uint8)
+            tile.setPixmap(np_to_pixmap(crop_preview(out, m, pad=60, side=150)))
+            shown += 1
         self.preview_note.setText(
             "Outline shows the pasted area. Click “Shuffle preview” for new random variations."
             if shown else "No valid placement found — reduce size or gap, or allow more movement.")

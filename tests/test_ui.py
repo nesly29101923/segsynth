@@ -264,3 +264,65 @@ def test_save_without_sqlite(app, window, tmp_path):
     assert (dest / "META" / "No_DB.sqlite").exists()
     import json
     assert json.loads((dest / "manifest.json").read_text())["labeltool_db"] == "META/No_DB.sqlite"
+
+
+def test_slots_mode(app, window, tmp_path):
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    from .test_slots import R, center, tray
+
+    write_image(tmp_path / "tray.png", tray(3))
+    proj = Project(name="Slots")
+    entry = proj.add_image(tmp_path / "tray.png")
+    window.state.replace_project(proj)
+    window.go(STEP_DEFECTS)
+    page = window.defects_page
+    canvas = page.canvas
+    page.mode_slots.click()
+    app.processEvents()
+    assert canvas.slot_mode and page.right_stack.currentIndex() == 1
+
+    def mouse(kind, x, y, button=Qt.LeftButton, mods=Qt.NoModifier):
+        vp = canvas.mapFromScene(QPointF(x, y))
+        held = Qt.NoButton if kind == QEvent.MouseButtonRelease else button
+        e = QMouseEvent(kind, QPointF(vp), QPointF(canvas.viewport().mapToGlobal(vp)), button, held, mods)
+        {QEvent.MouseButtonPress: canvas.mousePressEvent, QEvent.MouseMove: canvas.mouseMoveEvent,
+         QEvent.MouseButtonRelease: canvas.mouseReleaseEvent}[kind](e)
+
+    x, y = center(0, 0)
+    mouse(QEvent.MouseButtonPress, x - R - 3, y - R - 3)
+    mouse(QEvent.MouseMove, x + R + 4, y + R + 4)
+    mouse(QEvent.MouseButtonRelease, x + R + 4, y + R + 4)
+    assert page.detect_btn.isEnabled()
+    page.detect_btn.click()
+    assert len(entry.slots) == 48
+    page.sel_empty_btn.click()
+    assert len(entry.target_slots) == 2
+
+    x, y = center(2, 2)
+    mouse(QEvent.MouseButtonPress, x, y)
+    mouse(QEvent.MouseButtonRelease, x, y)
+    assert len(entry.target_slots) == 3
+    mouse(QEvent.MouseButtonPress, x, y, Qt.RightButton)
+    assert len(entry.slots) == 47
+    mouse(QEvent.MouseButtonPress, x, y, Qt.LeftButton, Qt.ShiftModifier)
+    assert len(entry.slots) == 48 and len(entry.target_slots) == 3
+    assert window.state.dirty
+
+    page.mode_defects.click()
+    m = np.zeros(proj.load_pixels(entry.id).shape[:2], np.uint8)
+    cv2.circle(m, center(0, 1), R + 3, 1, -1)
+    canvas.set_edit_mask(m)
+    page.commit()
+    page.defect_list.setCurrentRow(0)
+    page.label_combo.setCurrentIndex(page.label_combo.findData("good"))
+    assert proj.defects[0].label == "good"
+
+    window.go(STEP_RECIPE)
+    rp = window.recipe_page
+    rp.placement.setCurrentIndex(rp.placement.findData("slots"))
+    assert proj.settings.placement_mode == "slots"
+    rp.preview()
+    assert rp.slot_note.isVisibleTo(rp)
+    assert any(t.pixmap() is not None and not t.pixmap().isNull() for t in rp.preview_tiles)
